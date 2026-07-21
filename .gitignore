@@ -1,0 +1,32 @@
+# ── Secrets (NEVER commit) ────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Log files ─────────────────────────────────────────────
+logs/*.log
+logs/*.log.*
+
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual environments ─────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── IDE / Editor ──────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
