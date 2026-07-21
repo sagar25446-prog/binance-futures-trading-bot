@@ -144,6 +144,8 @@ python cli.py order BTCUSDT BUY MARKET 0.01
 ╚═════════════════════════════════════════════════╝
 ```
 
+> **Note on `Price / Avg Price`:** On the Binance Futures Testnet, MARKET orders often return `0.00` for the executed price in the immediate response payload. This is a known testnet quirk; the actual execution price is registered on the account but not always echoed back instantly.
+
 ### Place a Limit Order
 
 ```bash
