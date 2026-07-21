@@ -74,12 +74,7 @@ class OrderStatus(str, Enum):
     NEW_ADL = "NEW_ADL"
 
 
-class PositionSide(str, Enum):
-    """Position side for hedge mode."""
 
-    BOTH = "BOTH"
-    LONG = "LONG"
-    SHORT = "SHORT"
 
 
 # ── Order Request Model ──────────────────────────────────────────────
@@ -133,10 +128,10 @@ class OrderRequest(BaseModel):
     def normalize_symbol(cls, v: str) -> str:
         """Normalize symbol to uppercase and validate basic format."""
         v = v.upper().strip()
-        if not v.isalpha():
+        if not v.isalnum():
             raise ValueError(
                 f"Invalid symbol format: '{v}'. "
-                "Symbol must contain only letters (e.g., BTCUSDT)."
+                "Symbol must contain only alphanumeric characters (e.g., BTCUSDT)."
             )
         if len(v) < 5:
             raise ValueError(

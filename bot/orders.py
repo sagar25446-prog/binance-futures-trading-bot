@@ -163,7 +163,7 @@ class OrderManager:
             "type": "STOP",
             "quantity": str(request.quantity),
             "price": str(request.price),
-            "stopPrice": str(request.stop_price),
+            "triggerPrice": str(request.stop_price),
             "timeInForce": request.time_in_force.value,
         }
 

@@ -347,7 +347,23 @@ class BinanceClient:
             params.get("type"),
             params.get("quantity"),
         )
-        result = self._make_request("POST", "/fapi/v1/order", params=params)
+        # Binance migrated conditional orders to the algoOrder endpoint
+        endpoint = "/fapi/v1/order"
+        if params.get("type") in ("STOP", "STOP_MARKET", "TAKE_PROFIT", "TAKE_PROFIT_MARKET"):
+            endpoint = "/fapi/v1/algoOrder"
+            params["algoType"] = "CONDITIONAL"
+
+        result = self._make_request("POST", endpoint, params=params)
+        
+        # Normalize Algo API response to match standard order response structure
+        if "algoId" in result and "orderId" not in result:
+            result["orderId"] = result["algoId"]
+        if "executedQty" not in result:
+            result["executedQty"] = "0"
+        if "status" not in result:
+            result["status"] = "NEW" # Algo orders are typically NEW when placed
+        if "type" not in result:
+            result["type"] = params.get("type", "STOP")
         logger.info(
             "Order response: orderId=%s status=%s executedQty=%s avgPrice=%s",
             result.get("orderId"),

@@ -24,7 +24,6 @@ All actions are logged to ``logs/trading_bot.log`` (JSON-lines, DEBUG level).
 import io
 import logging
 import sys
-from decimal import Decimal
 from typing import Optional
 
 # ── Force UTF-8 stdout/stderr on Windows to support Rich formatting ──
