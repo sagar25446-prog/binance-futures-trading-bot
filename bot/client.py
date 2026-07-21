@@ -59,7 +59,7 @@ class BinanceClient:
 
     # Binance error codes that map to specific exception types
     _INSUFFICIENT_BALANCE_CODES = {-2019}
-    _RATE_LIMIT_CODES = {-1015}
+    _RATE_LIMIT_CODES = {-1015, -1003}
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings

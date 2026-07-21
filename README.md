@@ -1,10 +1,10 @@
-# 🤖 Binance Futures Testnet Trading Bot
+# Binance Futures Testnet Trading Bot
 
-A production-grade CLI trading bot for placing **Market**, **Limit**, and **Stop-Limit** orders on **Binance Futures Testnet (USDT-M)** with robust validation, structured logging, and beautiful terminal output.
+A CLI trading bot for placing Market, Limit, and Stop-Limit orders on the Binance Futures Testnet (USDT-M) with input validation, structured logging, and formatted terminal output.
 
 ---
 
-## ✨ Features
+## Features
 
 | Feature | Description |
 |:--------|:------------|
@@ -12,15 +12,15 @@ A production-grade CLI trading bot for placing **Market**, **Limit**, and **Stop
 | **Direct REST API** | HMAC-SHA256 signed requests — no wrapper library dependency |
 | **Exchange Validation** | Live filter checks (LOT_SIZE, PRICE_FILTER, MIN_NOTIONAL) |
 | **Interactive Mode** | Guided, menu-driven order placement with live price display |
-| **Beautiful CLI** | Rich panels, tables, spinners, and coloured output |
-| **Structured Logging** | Dual output: Rich console (human) + JSON file (machine) |
+| **CLI Formatting** | Rich panels, tables, and colored output |
+| **Structured Logging** | Dual output: console (human) + JSON file (machine) |
 | **Retry Logic** | Exponential backoff on transient network failures |
 | **Dry-Run Mode** | Preview orders without placing them |
 | **Secret Safety** | API keys loaded from `.env`, auto-redacted from all logs |
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 trading_bot/
@@ -67,7 +67,7 @@ trading_bot/
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -101,7 +101,7 @@ python cli.py --help
 
 ---
 
-## 📖 Usage Examples
+## Usage Examples
 
 ### Place a Market Order
 
@@ -159,7 +159,7 @@ python cli.py order ETHUSDT SELL LIMIT 0.1 --price 3500
 python cli.py order BTCUSDT BUY STOP 0.01 --price 100050 --stop-price 100000
 ```
 
-### Interactive Mode (Bonus — Enhanced CLI UX)
+### Interactive Mode
 
 ```bash
 python cli.py interactive
@@ -197,7 +197,7 @@ python cli.py cancel BTCUSDT 1234567890
 
 ---
 
-## 🟢 Verified on Live Testnet
+## Verified on Live Testnet
 
 This bot has been actively tested against the live Binance Futures Testnet. Below is evidence of actual order placement logged during development:
 
@@ -209,7 +209,7 @@ This bot has been actively tested against the live Binance Futures Testnet. Belo
 
 ---
 
-## 🧪 CLI Reference
+## CLI Reference
 
 | Command | Description |
 |:--------|:------------|
@@ -235,7 +235,7 @@ This bot has been actively tested against the live Binance Futures Testnet. Belo
 
 ---
 
-## 📝 Logging
+## Logging
 
 The bot uses a **dual-output** logging system:
 
@@ -267,7 +267,7 @@ The bot uses a **dual-output** logging system:
 
 ---
 
-## 🛡️ Error Handling
+## Error Handling
 
 The bot handles errors at every layer with clear, actionable messages:
 
@@ -287,7 +287,7 @@ All errors are:
 
 ---
 
-## 🔐 Security Practices
+## Security Practices
 
 - **No hardcoded secrets** — API keys loaded from `.env` via `python-dotenv`
 - **`.env` in `.gitignore`** — credentials never committed to version control
@@ -297,7 +297,7 @@ All errors are:
 
 ---
 
-## 🏛️ Design Decisions
+## Design Decisions
 
 | Decision | Rationale |
 |:---------|:----------|
@@ -314,7 +314,7 @@ All errors are:
 
 ---
 
-## 📌 Assumptions
+## Assumptions
 
 1. **Testnet only** — This bot is designed exclusively for the Binance Futures Testnet.  It should **not** be used with real funds without additional safeguards (position limits, kill switches, etc.).
 
@@ -330,7 +330,7 @@ All errors are:
 
 ---
 
-## 📦 Dependencies
+## Dependencies
 
 | Package | Version | Purpose |
 |:--------|:--------|:--------|
@@ -343,6 +343,6 @@ All errors are:
 
 ---
 
-## 📄 License
+## License
 
 This project was created as a technical assessment submission.
