@@ -19,7 +19,7 @@ def test_validate_cli_inputs_market():
     assert req.side == OrderSide.BUY
     assert req.order_type == OrderType.MARKET
     assert req.quantity == Decimal("0.01")
-    assert req.price == Decimal("0")
+    assert req.price is None
 
 def test_validate_cli_inputs_limit():
     """Test valid limit order parsing."""
