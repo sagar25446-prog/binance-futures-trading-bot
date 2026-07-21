@@ -271,7 +271,7 @@ The bot handles errors at every layer with clear, actionable messages:
 All errors are:
 - Displayed as coloured panels in the terminal
 - Logged to the JSON log file with full context
-- Never expose stack traces to the user (logged server-side only)
+- Never expose stack traces to the user — full tracebacks are persisted in the JSON log file for post-mortem debugging only
 
 ---
 
@@ -298,6 +298,7 @@ All errors are:
 | **Exception hierarchy** | Granular error types enable specific handling at each layer |
 | **Exchange info caching** | Avoids redundant API calls when placing multiple orders |
 | **Server-time sync** | Prevents `-1021 Timestamp outside recvWindow` errors from clock drift |
+| **Algo Order endpoint routing** | Binance migrated conditional orders (STOP/TAKE_PROFIT) to `/fapi/v1/algoOrder` in Dec 2025.  The client auto-detects order type and routes to the correct endpoint, normalising the different response shape (`algoId` → `orderId`) so downstream code stays clean.  Cancel and list operations also try both endpoints transparently. |
 
 ---
 
@@ -326,6 +327,7 @@ All errors are:
 | `rich` | ≥ 13.7.0 | Beautiful terminal formatting |
 | `pydantic` | ≥ 2.7.0 | Data validation with type hints |
 | `python-dotenv` | ≥ 1.0.0 | Load `.env` files into environment |
+| `pytest` | ≥ 8.0.0 | Unit testing framework |
 
 ---
 

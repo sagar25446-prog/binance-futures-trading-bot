@@ -13,13 +13,16 @@ interact with the Binance Futures Testnet REST API.
 
 Endpoints used
 --------------
-GET  /fapi/v1/time          – Server time (for clock sync)
-GET  /fapi/v1/exchangeInfo  – Trading rules and symbol filters
-GET  /fapi/v1/ticker/price  – Current market price
-GET  /fapi/v2/account       – Account balances and positions
-POST /fapi/v1/order         – Place a new order
-DELETE /fapi/v1/order       – Cancel an existing order
-GET  /fapi/v1/openOrders    – List open orders
+GET    /fapi/v1/time            – Server time (for clock sync)
+GET    /fapi/v1/exchangeInfo    – Trading rules and symbol filters
+GET    /fapi/v1/ticker/price    – Current market price
+GET    /fapi/v2/account         – Account balances and positions
+POST   /fapi/v1/order           – Place a standard order (MARKET/LIMIT)
+POST   /fapi/v1/algoOrder       – Place a conditional order (STOP/TP)
+DELETE /fapi/v1/order           – Cancel a standard order
+DELETE /fapi/v1/algoOrder       – Cancel a conditional (algo) order
+GET    /fapi/v1/openOrders      – List open standard orders
+GET    /fapi/v1/openAlgoOrders  – List open conditional (algo) orders
 """
 
 import hashlib
@@ -374,7 +377,11 @@ class BinanceClient:
         return result
 
     def cancel_order(self, symbol: str, order_id: int) -> Dict[str, Any]:
-        """Cancel an existing order.
+        """Cancel a standard (non-algo) order.
+
+        For orders placed via ``/fapi/v1/order`` (MARKET, LIMIT).
+        For STOP/TAKE_PROFIT orders placed via the Algo API, use
+        ``cancel_algo_order`` instead.
 
         Args:
             symbol:   Trading pair (e.g., BTCUSDT).
@@ -390,10 +397,38 @@ class BinanceClient:
             params={"symbol": symbol.upper(), "orderId": order_id},
         )
 
+    def cancel_algo_order(
+        self, symbol: str, algo_id: int
+    ) -> Dict[str, Any]:
+        """Cancel a conditional (algo) order.
+
+        For orders placed via ``/fapi/v1/algoOrder`` (STOP, STOP_MARKET,
+        TAKE_PROFIT, TAKE_PROFIT_MARKET).  These orders live under
+        ``algoId``, not ``orderId``.
+
+        Args:
+            symbol:  Trading pair (e.g., BTCUSDT).
+            algo_id: The algoId returned when the order was placed.
+
+        Returns:
+            Cancellation response from the API.
+        """
+        logger.info(
+            "Cancelling algo order: symbol=%s algoId=%d", symbol, algo_id
+        )
+        return self._make_request(
+            "DELETE",
+            "/fapi/v1/algoOrder",
+            params={"symbol": symbol.upper(), "algoId": algo_id},
+        )
+
     def get_open_orders(
         self, symbol: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Get all open orders, optionally filtered by symbol.
+        """Get all open standard orders, optionally filtered by symbol.
+
+        Does NOT include algo/conditional orders.  Use
+        ``get_open_algo_orders`` for those.
 
         Args:
             symbol: Optional trading pair filter.
@@ -405,3 +440,24 @@ class BinanceClient:
         if symbol:
             params["symbol"] = symbol.upper()
         return self._make_request("GET", "/fapi/v1/openOrders", params=params)
+
+    def get_open_algo_orders(
+        self, symbol: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Get all open conditional (algo) orders.
+
+        Returns orders placed via ``/fapi/v1/algoOrder``
+        (STOP, STOP_MARKET, TAKE_PROFIT, etc.).
+
+        Args:
+            symbol: Optional trading pair filter.
+
+        Returns:
+            List of open algo order dicts.
+        """
+        params: Dict[str, Any] = {}
+        if symbol:
+            params["symbol"] = symbol.upper()
+        return self._make_request(
+            "GET", "/fapi/v1/openAlgoOrders", params=params
+        )

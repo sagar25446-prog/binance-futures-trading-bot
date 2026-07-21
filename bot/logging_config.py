@@ -114,6 +114,7 @@ class JSONFormatter(logging.Formatter):
             log_entry["exception"] = {
                 "type": type(record.exc_info[1]).__name__,
                 "message": str(record.exc_info[1]),
+                "traceback": self.formatException(record.exc_info),
             }
         return json.dumps(log_entry, default=str)
 
@@ -142,7 +143,7 @@ def setup_logging(
     # ── Console handler (Rich) ────────────────────────────────────────
     console_handler = RichHandler(
         level=getattr(logging, log_level.upper(), logging.INFO),
-        rich_tracebacks=True,
+        rich_tracebacks=False,
         tracebacks_show_locals=False,
         show_time=True,
         show_path=False,

@@ -22,7 +22,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from bot.client import BinanceClient
-from bot.exceptions import ValidationError
+from bot.exceptions import BinanceAPIError, ValidationError
 from bot.models import (
     OrderRequest,
     OrderResponse,
@@ -209,29 +209,55 @@ class OrderManager:
         return balances
 
     def cancel_order(self, symbol: str, order_id: int) -> Dict[str, Any]:
-        """Cancel an open order.
+        """Cancel an open order, auto-detecting standard vs algo.
+
+        Tries the standard ``/fapi/v1/order`` endpoint first.  If Binance
+        returns error -2011 (Unknown order), falls back to the Algo Order
+        endpoint (``/fapi/v1/algoOrder``) since the order may have been
+        placed as a conditional/algo order.
 
         Args:
             symbol:   Trading pair (e.g., BTCUSDT).
-            order_id: The orderId to cancel.
+            order_id: The orderId (or algoId) to cancel.
 
         Returns:
             Cancellation response from the API.
         """
         logger.info("Cancelling order %d for %s", order_id, symbol)
-        return self._client.cancel_order(symbol.upper(), order_id)
+        try:
+            return self._client.cancel_order(symbol.upper(), order_id)
+        except BinanceAPIError as exc:
+            # -2011 = "Unknown order" — likely an algo order
+            if exc.code == -2011:
+                logger.info(
+                    "Order %d not found on standard endpoint, "
+                    "trying algo order endpoint...",
+                    order_id,
+                )
+                return self._client.cancel_algo_order(
+                    symbol.upper(), order_id
+                )
+            raise
 
     def get_open_orders(
         self, symbol: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Get all open orders, optionally filtered by symbol.
+        """Get all open orders (standard + algo) for a symbol.
+
+        Merges results from both ``/fapi/v1/openOrders`` and
+        ``/fapi/v1/openAlgoOrders`` to give a complete view.
 
         Args:
             symbol: Optional trading pair filter.
 
         Returns:
-            List of open order dicts.
+            Combined list of open order dicts.
         """
-        return self._client.get_open_orders(
+        standard = self._client.get_open_orders(
             symbol.upper() if symbol else None
         )
+        algo = self._client.get_open_algo_orders(
+            symbol.upper() if symbol else None
+        )
+        return standard + algo
+
