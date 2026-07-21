@@ -185,7 +185,7 @@ class BinanceClient:
 
                 # ── Check for API errors ─────────────────────────────
                 if response.status_code >= 400 or (
-                    isinstance(data, dict) and "code" in data
+                    isinstance(data, dict) and "code" in data and str(data["code"]) != "200"
                 ):
                     self._handle_api_error(data, response.status_code, response)
 
@@ -361,6 +361,10 @@ class BinanceClient:
         # Normalize Algo API response to match standard order response structure
         if "algoId" in result and "orderId" not in result:
             result["orderId"] = result["algoId"]
+        if "clientAlgoId" in result and "clientOrderId" not in result:
+            result["clientOrderId"] = result["clientAlgoId"]
+        if "triggerPrice" in result and "stopPrice" not in result:
+            result["stopPrice"] = result["triggerPrice"]
         if "executedQty" not in result:
             result["executedQty"] = "0"
         if "status" not in result:

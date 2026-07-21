@@ -165,22 +165,33 @@ def test_binance_client_place_order_routing(client):
         )
 
 
-def test_binance_client_place_order_normalization(client):
-    """
-    Test BinanceClient.place_order() response normalization for algo orders.
-    Verifies that missing fields (executedQty, status, type, orderId) are filled in.
-    """
-    mock_raw_response = {
-        "algoId": 555,
+def test_binance_client_place_algo_order_normalization(mock_settings):
+    """Test that BinanceClient normalizes Algo API responses."""
+    client = BinanceClient(mock_settings)
+    
+    mock_algo_response = {
+        "algoId": 123456789,
+        "clientAlgoId": "test_algo_id",
+        "triggerPrice": "50000.0",
         "symbol": "BTCUSDT",
-        "side": "BUY"
     }
     
-    with patch.object(client, '_make_request', return_value=mock_raw_response):
-        result = client.place_order({"symbol": "BTCUSDT", "side": "BUY", "type": "STOP"})
+    with patch.object(client, "_make_request", return_value=mock_algo_response) as mock_make:
+        result = client.place_order({
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "type": "STOP",
+            "quantity": 0.01,
+            "stopPrice": 50000.0
+        })
         
-        assert result["orderId"] == 555
-        assert result["algoId"] == 555
+        # Verify the endpoint was called correctly
+        mock_make.assert_called_once()
+        
+        # Verify normalization
+        assert result["orderId"] == 123456789
+        assert result["clientOrderId"] == "test_algo_id"
+        assert result["stopPrice"] == "50000.0"
         assert result["executedQty"] == "0"
         assert result["status"] == "NEW"
         assert result["type"] == "STOP"

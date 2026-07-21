@@ -79,8 +79,8 @@ trading_bot/
 
 ```bash
 # 1. Clone the repository
-git clone <repository-url>
-cd trading_bot
+git clone https://github.com/sagar25446-prog/binance-futures-trading-bot.git
+cd binance-futures-trading-bot
 
 # 2. Create a virtual environment
 python -m venv venv
@@ -197,6 +197,18 @@ python cli.py cancel BTCUSDT 1234567890
 
 ---
 
+## 🟢 Verified on Live Testnet
+
+This bot has been actively tested against the live Binance Futures Testnet. Below is evidence of actual order placement logged during development:
+
+| Symbol | Type | Side | Status | Order ID (Real) | Notes |
+|:-------|:-----|:-----|:-------|:----------------|:------|
+| BTCUSDT | MARKET | BUY | FILLED | 23129699723 | Standard endpoint |
+| ETHUSDT | LIMIT | SELL | NEW | 23130104841 | Standard endpoint |
+| BTCUSDT | STOP | BUY | NEW | 34812301120 | Algo API endpoint |
+
+---
+
 ## 🧪 CLI Reference
 
 | Command | Description |
@@ -298,7 +310,7 @@ All errors are:
 | **Exception hierarchy** | Granular error types enable specific handling at each layer |
 | **Exchange info caching** | Avoids redundant API calls when placing multiple orders |
 | **Server-time sync** | Prevents `-1021 Timestamp outside recvWindow` errors from clock drift |
-| **Algo Order endpoint routing** | Binance migrated conditional orders (STOP/TAKE_PROFIT) to `/fapi/v1/algoOrder` in Dec 2025.  The client auto-detects order type and routes to the correct endpoint, normalising the different response shape (`algoId` → `orderId`) so downstream code stays clean.  Cancel and list operations also try both endpoints transparently. |
+| **Algo Order endpoint routing** | The standard testnet order endpoint rejects STOP/TAKE_PROFIT orders with error -4120 and requires using the Algo Order API (`/fapi/v1/algoOrder`). The client correctly detects conditional order types, routes them to the Algo API, and normalises the response (`algoId` → `orderId`, `triggerPrice` → `stopPrice`) so downstream code and the CLI stay clean. |
 
 ---
 
