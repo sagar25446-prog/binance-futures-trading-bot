@@ -11,6 +11,7 @@ order        Place a Market, Limit, or Stop-Limit order via arguments.
 interactive  Launch guided, menu-driven order placement.
 account      View testnet account balances.
 price        Get current market price for a symbol.
+orders       List open orders (standard and conditional).
 cancel       Cancel an open order by orderId.
 
 Every command displays:
@@ -23,8 +24,10 @@ All actions are logged to ``logs/trading_bot.log`` (JSON-lines, DEBUG level).
 
 import io
 import logging
+import os
 import sys
-from typing import Optional
+from contextlib import contextmanager
+from typing import Iterator, Optional
 
 # ── Force UTF-8 stdout/stderr on Windows to support Rich formatting ──
 if sys.platform == "win32":
@@ -36,6 +39,7 @@ if sys.platform == "win32":
     )
 
 import typer
+from dotenv import load_dotenv
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
@@ -58,7 +62,7 @@ from bot.orders import OrderManager
 from bot.validators import validate_cli_inputs
 
 logger = logging.getLogger("trading_bot.cli")
-console = Console(force_terminal=True)
+console = Console()
 
 app = typer.Typer(
     name="trading-bot",
@@ -75,16 +79,29 @@ app = typer.Typer(
 # ── Shared Helpers ────────────────────────────────────────────────────
 
 
-def _get_manager() -> tuple:
-    """Initialize Settings, BinanceClient, and OrderManager.
+@contextmanager
+def _session() -> Iterator[tuple]:
+    """Open a time-synced client + OrderManager and always close the client.
 
-    Returns:
+    Yields:
         Tuple of (Settings, OrderManager).
     """
     settings = Settings.from_env()
     client = BinanceClient(settings)
-    client.sync_time()
-    return settings, OrderManager(client)
+    try:
+        client.sync_time()
+        if not settings.is_testnet:
+            console.print(
+                Panel(
+                    f"[bold red]WARNING: {settings.base_url} is not a known "
+                    "Binance testnet host.[/bold red]\n"
+                    "Orders sent from here may use REAL funds.",
+                    border_style="red",
+                )
+            )
+        yield settings, OrderManager(client)
+    finally:
+        client.close()
 
 
 def _print_banner() -> None:
@@ -262,6 +279,97 @@ def _print_error(error: Exception) -> None:
         )
 
 
+def _interactive_loop(manager: OrderManager) -> None:
+    """Run the prompt loop until the user chooses to stop."""
+    while True:
+        # ── Gather inputs ────────────────────────────────────────
+        console.rule("[bold cyan]New Order[/bold cyan]", style="cyan")
+        console.print()
+
+        symbol = Prompt.ask(
+            "[bold cyan]Symbol[/bold cyan]", default="BTCUSDT"
+        ).upper().strip()
+
+        # Show current price as context
+        try:
+            with console.status("[dim]Fetching price...[/dim]"):
+                current_price = manager.get_current_price(symbol)
+            console.print(
+                f"  [dim]Current {symbol} price: "
+                f"[bold green]${current_price}[/bold green][/dim]\n"
+            )
+        except Exception:
+            console.print(
+                "  [dim yellow][!] Could not fetch current price[/dim yellow]\n"
+            )
+            current_price = None
+
+        side = Prompt.ask(
+            "[bold cyan]Side[/bold cyan]",
+            choices=["BUY", "SELL"],
+            default="BUY",
+        )
+
+        otype = Prompt.ask(
+            "[bold cyan]Order Type[/bold cyan]",
+            choices=["MARKET", "LIMIT", "STOP"],
+            default="MARKET",
+        )
+
+        quantity = Prompt.ask("[bold cyan]Quantity[/bold cyan]")
+
+        price_str: Optional[str] = None
+        stop_str: Optional[str] = None
+
+        if otype in ("LIMIT", "STOP"):
+            default_price = str(current_price) if current_price else None
+            price_str = Prompt.ask(
+                "[bold cyan]Limit Price[/bold cyan]",
+                default=default_price,
+            )
+
+        if otype == "STOP":
+            stop_str = Prompt.ask(
+                "[bold cyan]Stop Trigger Price[/bold cyan]"
+            )
+
+        # ── Validate and preview ─────────────────────────────────
+        try:
+            request = validate_cli_inputs(
+                symbol, side, otype, quantity, price_str, stop_str
+            )
+        except ValidationError as exc:
+            _print_error(exc)
+            console.print()
+            if Confirm.ask("Try again?", default=True):
+                continue
+            break
+
+        console.print()
+        _print_order_summary(request)
+
+        if not Confirm.ask("[bold yellow]Place this order?[/bold yellow]"):
+            console.print("[dim]Order cancelled.[/dim]\n")
+            if not Confirm.ask("Place another order?", default=True):
+                break
+            continue
+
+        # ── Place order ──────────────────────────────────────────
+        try:
+            with console.status(
+                "[bold cyan]Placing order...[/bold cyan]", spinner="dots"
+            ):
+                response = manager.place_order(request)
+            _print_order_response(response)
+        except TradingBotError as exc:
+            _print_error(exc)
+            logger.error("Order failed: %s", str(exc))
+
+        console.print()
+        if not Confirm.ask("Place another order?", default=True):
+            break
+
+
 # ── CLI Commands ──────────────────────────────────────────────────────
 
 
@@ -328,16 +436,11 @@ def order(
             return
 
         # Connect and place order
-        with console.status(
-            "[bold cyan]Connecting to Binance Testnet...[/bold cyan]",
-            spinner="dots",
-        ):
-            settings, manager = _get_manager()
-
-        with console.status(
-            "[bold cyan]Placing order...[/bold cyan]", spinner="dots"
-        ):
-            response = manager.place_order(request)
+        with _session() as (_settings, manager):
+            with console.status(
+                "[bold cyan]Placing order...[/bold cyan]", spinner="dots"
+            ):
+                response = manager.place_order(request)
 
         _print_order_response(response)
 
@@ -369,102 +472,12 @@ def interactive() -> None:
     )
 
     try:
-        # Initialize connection once for the whole session
-        with console.status(
-            "[bold cyan]Connecting to Binance Testnet...[/bold cyan]",
-            spinner="dots",
-        ):
-            settings, manager = _get_manager()
-        console.print("[green][OK][/green] Connected to Binance Testnet\n")
-
-        while True:
-            # ── Gather inputs ────────────────────────────────────────
-            console.rule("[bold cyan]New Order[/bold cyan]", style="cyan")
-            console.print()
-
-            symbol = Prompt.ask(
-                "[bold cyan]Symbol[/bold cyan]", default="BTCUSDT"
-            ).upper().strip()
-
-            # Show current price as context
-            try:
-                with console.status("[dim]Fetching price...[/dim]"):
-                    current_price = manager.get_current_price(symbol)
-                console.print(
-                    f"  [dim]Current {symbol} price: "
-                    f"[bold green]${current_price}[/bold green][/dim]\n"
-                )
-            except Exception:
-                console.print(
-                    "  [dim yellow][!] Could not fetch current price[/dim yellow]\n"
-                )
-                current_price = None
-
-            side = Prompt.ask(
-                "[bold cyan]Side[/bold cyan]",
-                choices=["BUY", "SELL"],
-                default="BUY",
+        # One connection for the whole session; always closed on exit.
+        with _session() as (settings, manager):
+            console.print(
+                f"[green][OK][/green] Connected to {settings.base_url}\n"
             )
-
-            otype = Prompt.ask(
-                "[bold cyan]Order Type[/bold cyan]",
-                choices=["MARKET", "LIMIT", "STOP"],
-                default="MARKET",
-            )
-
-            quantity = Prompt.ask("[bold cyan]Quantity[/bold cyan]")
-
-            price_str: Optional[str] = None
-            stop_str: Optional[str] = None
-
-            if otype in ("LIMIT", "STOP"):
-                default_price = str(current_price) if current_price else None
-                price_str = Prompt.ask(
-                    "[bold cyan]Limit Price[/bold cyan]",
-                    default=default_price,
-                )
-
-            if otype == "STOP":
-                stop_str = Prompt.ask(
-                    "[bold cyan]Stop Trigger Price[/bold cyan]"
-                )
-
-            # ── Validate and preview ─────────────────────────────────
-            try:
-                request = validate_cli_inputs(
-                    symbol, side, otype, quantity, price_str, stop_str
-                )
-            except ValidationError as exc:
-                _print_error(exc)
-                console.print()
-                if Confirm.ask("Try again?", default=True):
-                    continue
-                break
-
-            console.print()
-            _print_order_summary(request)
-
-            if not Confirm.ask("[bold yellow]Place this order?[/bold yellow]"):
-                console.print("[dim]Order cancelled.[/dim]\n")
-                if not Confirm.ask("Place another order?", default=True):
-                    break
-                continue
-
-            # ── Place order ──────────────────────────────────────────
-            try:
-                with console.status(
-                    "[bold cyan]Placing order...[/bold cyan]", spinner="dots"
-                ):
-                    response = manager.place_order(request)
-                _print_order_response(response)
-            except TradingBotError as exc:
-                _print_error(exc)
-                logger.error("Order failed: %s", str(exc))
-
-            console.print()
-            if not Confirm.ask("Place another order?", default=True):
-                break
-
+            _interactive_loop(manager)
         console.print(
             "\n[bold cyan]Thanks for using the Trading Bot![/bold cyan]"
         )
@@ -492,11 +505,11 @@ def account() -> None:
     _print_banner()
 
     try:
-        with console.status(
-            "[bold cyan]Fetching account info...[/bold cyan]", spinner="dots"
-        ):
-            _settings, manager = _get_manager()
-            balances = manager.get_account_balances()
+        with _session() as (_settings, manager):
+            with console.status(
+                "[bold cyan]Fetching account info...[/bold cyan]", spinner="dots"
+            ):
+                balances = manager.get_account_balances()
 
         if not balances:
             console.print("[yellow]No non-zero balances found.[/yellow]")
@@ -547,12 +560,12 @@ def price(
         python cli.py price ETHUSDT
     """
     try:
-        with console.status(
-            f"[bold cyan]Fetching {symbol.upper()} price...[/bold cyan]",
-            spinner="dots",
-        ):
-            _settings, manager = _get_manager()
-            current = manager.get_current_price(symbol)
+        with _session() as (_settings, manager):
+            with console.status(
+                f"[bold cyan]Fetching {symbol.upper()} price...[/bold cyan]",
+                spinner="dots",
+            ):
+                current = manager.get_current_price(symbol)
 
         console.print(
             Panel(
@@ -563,6 +576,72 @@ def price(
                 box=box.ROUNDED,
             )
         )
+    except TradingBotError as exc:
+        _print_error(exc)
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        _print_error(exc)
+        logger.exception("Unexpected error")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def orders(
+    symbol: Optional[str] = typer.Argument(
+        None, help="Only show orders for this pair (e.g., BTCUSDT)"
+    ),
+) -> None:
+    """List open orders, including conditional (stop) orders.
+
+    \b
+    Examples:
+        python cli.py orders
+        python cli.py orders BTCUSDT
+    """
+    _print_banner()
+
+    try:
+        with _session() as (_settings, manager):
+            with console.status(
+                "[bold cyan]Fetching open orders...[/bold cyan]", spinner="dots"
+            ):
+                rows = manager.list_open_orders(symbol)
+
+        if not rows:
+            console.print("[yellow]No open orders.[/yellow]")
+            return
+
+        table = Table(
+            title="[OPEN ORDERS]",
+            box=box.ROUNDED,
+            title_style="bold green",
+            border_style="green",
+        )
+        for col, justify in (
+            ("Order ID", "right"),
+            ("Symbol", "left"),
+            ("Side", "left"),
+            ("Type", "left"),
+            ("Qty", "right"),
+            ("Price", "right"),
+            ("Trigger", "right"),
+            ("Status", "left"),
+        ):
+            table.add_column(col, justify=justify)
+        for r in rows:
+            side_style = "green" if r["side"] == "BUY" else "red"
+            table.add_row(
+                r["id"],
+                r["symbol"],
+                f"[{side_style}]{r['side']}[/{side_style}]",
+                r["type"],
+                r["quantity"],
+                r["price"],
+                r["trigger"],
+                r["status"],
+            )
+        console.print(table)
+
     except TradingBotError as exc:
         _print_error(exc)
         raise typer.Exit(code=1)
@@ -584,11 +663,11 @@ def cancel(
         python cli.py cancel BTCUSDT 123456789
     """
     try:
-        with console.status(
-            "[bold cyan]Cancelling order...[/bold cyan]", spinner="dots"
-        ):
-            _settings, manager = _get_manager()
-            manager.cancel_order(symbol, order_id)
+        with _session() as (_settings, manager):
+            with console.status(
+                "[bold cyan]Cancelling order...[/bold cyan]", spinner="dots"
+            ):
+                manager.cancel_order(symbol, order_id)
 
         console.print(
             Panel(
@@ -637,7 +716,11 @@ def _main_callback(
 
 def main() -> None:
     """Application entry point -- sets up logging then launches the CLI."""
-    setup_logging()
+    load_dotenv()
+    setup_logging(
+        log_dir=os.getenv("LOG_DIR", "logs"),
+        log_level=os.getenv("LOG_LEVEL", "INFO"),
+    )
     app()
 
 

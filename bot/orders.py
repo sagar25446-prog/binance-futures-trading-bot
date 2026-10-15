@@ -261,3 +261,50 @@ class OrderManager:
         )
         return standard + algo
 
+
+    def list_open_orders(
+        self, symbol: Optional[str] = None
+    ) -> List[Dict[str, str]]:
+        """Open orders (standard + algo) flattened to one uniform row shape.
+
+        Standard orders and conditional (algo) orders come back from Binance
+        with different field names; this hides that difference so callers
+        (such as the CLI) can render them in a single table.
+
+        Returns:
+            Rows with ``id``, ``symbol``, ``side``, ``type``, ``quantity``,
+            ``price``, ``trigger``, ``status`` and ``kind`` ("standard" or
+            "algo"), sorted by symbol then id.
+        """
+        rows: List[Dict[str, str]] = []
+        sym = symbol.upper() if symbol else None
+        for o in self._client.get_open_orders(sym):
+            rows.append(
+                {
+                    "id": str(o.get("orderId", "")),
+                    "symbol": str(o.get("symbol", "")),
+                    "side": str(o.get("side", "")),
+                    "type": str(o.get("type", "")),
+                    "quantity": str(o.get("origQty", "")),
+                    "price": str(o.get("price", "0")),
+                    "trigger": str(o.get("stopPrice", "0")),
+                    "status": str(o.get("status", "")),
+                    "kind": "standard",
+                }
+            )
+        for o in self._client.get_open_algo_orders(sym):
+            rows.append(
+                {
+                    "id": str(o.get("algoId", o.get("orderId", ""))),
+                    "symbol": str(o.get("symbol", "")),
+                    "side": str(o.get("side", "")),
+                    "type": str(o.get("orderType", o.get("type", ""))),
+                    "quantity": str(o.get("quantity", o.get("origQty", ""))),
+                    "price": str(o.get("price", "0")),
+                    "trigger": str(o.get("triggerPrice", o.get("stopPrice", "0"))),
+                    "status": str(o.get("algoStatus", o.get("status", "NEW"))),
+                    "kind": "algo",
+                }
+            )
+        rows.sort(key=lambda r: (r["symbol"], int(r["id"]) if r["id"].isdigit() else 0, r["id"]))
+        return rows
