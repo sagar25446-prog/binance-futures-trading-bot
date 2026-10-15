@@ -14,7 +14,8 @@ A CLI trading bot for placing Market, Limit, and Stop-Limit orders on the Binanc
 | **Interactive Mode** | Guided, menu-driven order placement with live price display |
 | **CLI Formatting** | Rich panels, tables, and colored output |
 | **Structured Logging** | Dual output: console (human) + JSON file (machine) |
-| **Retry Logic** | Exponential backoff on transient network failures |
+| **Safe Retries** | Exponential backoff for reads; an order is never resent after an ambiguous failure (no double orders) |
+| **Open-Order View** | `orders` lists standard and conditional (stop) orders in one table |
 | **Dry-Run Mode** | Preview orders without placing them |
 | **Secret Safety** | API keys loaded from `.env`, auto-redacted from all logs |
 
@@ -90,6 +91,7 @@ venv\Scripts\activate           # Windows
 
 # 3. Install dependencies
 pip install -r requirements.txt
+#    (contributors: pip install -r requirements-dev.txt)
 
 # 4. Configure API credentials
 cp .env.example .env
@@ -189,6 +191,15 @@ python cli.py account
 python cli.py price BTCUSDT
 ```
 
+### List Open Orders
+
+Shows standard and conditional (stop) orders together.
+
+```bash
+python cli.py orders            # all symbols
+python cli.py orders BTCUSDT    # one symbol
+```
+
 ### Cancel an Order
 
 ```bash
@@ -217,6 +228,7 @@ This bot has been actively tested against the live Binance Futures Testnet. Belo
 | `interactive` | Guided order placement with prompts |
 | `account` | View testnet account balances |
 | `price` | Get current market price |
+| `orders` | List open orders (standard + conditional) |
 | `cancel` | Cancel an open order |
 | `--version` | Show version and exit |
 | `--help` | Show help and exit |
@@ -276,8 +288,8 @@ The bot handles errors at every layer with clear, actionable messages:
 | **ConfigurationError** | Missing API key | Displays setup instructions |
 | **ValidationError** | Invalid quantity | Shows field name + suggested fix |
 | **BinanceAPIError** | Invalid symbol | Shows Binance error code + message |
-| **NetworkError** | Connection timeout | Retries with exponential backoff |
-| **RateLimitError** | Too many requests | Reports retry-after duration |
+| **NetworkError** | Connection timeout | Retries reads with exponential backoff; for orders, retries only if the request never left. After an ambiguous failure it stops and tells you to check open orders rather than risk a duplicate |
+| **RateLimitError** | Too many requests (`-1003`/`-1015`, HTTP 418/429) | Reports retry-after duration |
 | **InsufficientBalanceError** | Low margin | Clear balance error message |
 
 All errors are:
@@ -292,7 +304,9 @@ All errors are:
 - **No hardcoded secrets** — API keys loaded from `.env` via `python-dotenv`
 - **`.env` in `.gitignore`** — credentials never committed to version control
 - **Log sanitization** — API keys, secrets, and signatures are automatically redacted from all log output
-- **Masked display** — API key shown as `ABCD****WXYZ` in status messages
+- **Masked display** — API key shown as `ABCD****` in status messages (only the first four characters)
+- **Testnet guard** — a warning is shown if `BINANCE_TESTNET_BASE_URL` points at a host that is not a known testnet
+- **HTTPS only** — configuration is rejected if the base URL is not `https://`, since requests carry signed parameters
 - **No secrets in error messages** — exception details never contain credentials
 
 ---
@@ -309,6 +323,7 @@ All errors are:
 | **Frozen dataclass for Settings** | Immutable configuration prevents accidental mutation after startup |
 | **Exception hierarchy** | Granular error types enable specific handling at each layer |
 | **Exchange info caching** | Avoids redundant API calls when placing multiple orders |
+| **No blind order retries** | A read timeout on `POST /order` does not tell you whether Binance already accepted it, so resending could open a second position. Only failures where the request provably never left (connection refused / connect timeout) are retried for orders. |
 | **Server-time sync** | Prevents `-1021 Timestamp outside recvWindow` errors from clock drift |
 | **Algo Order endpoint routing** | The standard testnet order endpoint rejects STOP/TAKE_PROFIT orders with error -4120 and requires using the Algo Order API (`/fapi/v1/algoOrder`). The client correctly detects conditional order types, routes them to the Algo API, and normalises the response (`algoId` → `orderId`, `triggerPrice` → `stopPrice`) so downstream code and the CLI stay clean. |
 
@@ -335,11 +350,43 @@ All errors are:
 | Package | Version | Purpose |
 |:--------|:--------|:--------|
 | `httpx` | ≥ 0.27.0 | Modern HTTP client with retry support |
-| `typer[all]` | ≥ 0.12.0 | CLI framework with Rich integration |
+| `typer` | ≥ 0.12.0 | CLI framework |
 | `rich` | ≥ 13.7.0 | Beautiful terminal formatting |
 | `pydantic` | ≥ 2.7.0 | Data validation with type hints |
 | `python-dotenv` | ≥ 1.0.0 | Load `.env` files into environment |
-| `pytest` | ≥ 8.0.0 | Unit testing framework |
+
+Development tools (`pytest`, `pytest-cov`, `ruff`) are in `requirements-dev.txt`.
+
+---
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+pytest --cov          # run the tests with coverage (fails under 90%)
+ruff check .          # lint
+```
+
+No test touches the network: the HTTP layer is exercised with `httpx.MockTransport`, which lets the
+tests assert on the exact signed request that would be sent. CI (GitHub Actions) runs lint, the test
+suite on Python 3.9 / 3.11 / 3.13, and a Docker build on every push and pull request.
+
+You can also install the project as a package, which provides a `trading-bot` command:
+
+```bash
+pip install -e .
+trading-bot --help
+```
+
+## Docker
+
+```bash
+docker build -t trading-bot .
+docker run --rm --env-file .env trading-bot account
+docker run --rm --env-file .env trading-bot order BTCUSDT BUY MARKET 0.01 --dry-run
+```
+
+The image runs as a non-root user and never contains your `.env` (see `.dockerignore`).
 
 ---
 
