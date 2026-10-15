@@ -158,7 +158,7 @@ class OrderResponse(BaseModel):
     status: str
     quantity: str = Field(..., alias="origQty")
     executed_qty: str = Field(..., alias="executedQty")
-    price: str
+    price: str = "0"
     avg_price: str = Field(default="0", alias="avgPrice")
     stop_price: str = Field(default="0", alias="stopPrice")
     time_in_force: str = Field(default="GTC", alias="timeInForce")

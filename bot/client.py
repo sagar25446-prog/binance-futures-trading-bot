@@ -29,6 +29,7 @@ import hashlib
 import hmac
 import logging
 import time
+from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlencode
 
@@ -43,6 +44,14 @@ from bot.exceptions import (
 )
 
 logger = logging.getLogger("trading_bot.client")
+
+
+class _RetryableServerError(Exception):
+    """Internal signal: an idempotent request hit an HTTP 5xx and may be retried."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(f"HTTP {status_code}")
 
 
 class BinanceClient:
@@ -60,6 +69,22 @@ class BinanceClient:
     # Binance error codes that map to specific exception types
     _INSUFFICIENT_BALANCE_CODES = {-2019}
     _RATE_LIMIT_CODES = {-1015, -1003}
+    _TIMESTAMP_ERROR_CODE = -1021
+    _RATE_LIMIT_HTTP_STATUSES = {418, 429}
+
+    # Order-type values that must be routed to the Algo Order endpoint.
+    _ALGO_ORDER_TYPES = (
+        "STOP",
+        "STOP_MARKET",
+        "TAKE_PROFIT",
+        "TAKE_PROFIT_MARKET",
+    )
+
+    # Failures where the request provably never reached Binance, so even a
+    # state-changing call (POST/DELETE) can be retried without any risk of
+    # executing it twice.  Any other transport failure (e.g. a read timeout)
+    # is "ambiguous": Binance may already have processed the request.
+    _NEVER_SENT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -142,10 +167,20 @@ class BinanceClient:
     ) -> Union[Dict[str, Any], List[Any]]:
         """Execute an HTTP request with retry logic and error handling.
 
-        Retries are performed with exponential backoff for transient
-        network errors (connection refused, timeout, read error).
-        API-level errors (invalid symbol, insufficient balance) are
-        raised immediately without retry.
+        Retry policy (designed so an order can never be executed twice):
+
+        * Idempotent ``GET`` requests are retried with exponential backoff
+          on any transient network error and on HTTP 5xx responses.
+        * ``POST`` / ``DELETE`` requests are retried **only** when the request
+          provably never reached Binance (connection refused, connect
+          timeout).  If a timeout happens after the request may have been
+          sent, the outcome is unknown, so a ``NetworkError`` is raised
+          immediately and the caller must check open orders instead of
+          blindly resending.
+        * A ``-1021`` (timestamp outside recvWindow) error triggers one
+          automatic clock re-sync followed by one retry.
+        * API-level errors (invalid symbol, insufficient balance, rate
+          limit) are raised immediately without retry.
 
         Args:
             method:   HTTP method (GET, POST, DELETE).
@@ -161,71 +196,115 @@ class BinanceClient:
             NetworkError: On connection/timeout failures after all retries.
             RateLimitError: When rate limit is exceeded.
         """
-        params = dict(params) if params else {}
+        method = method.upper()
+        base_params = dict(params) if params else {}
         url = f"{self._base_url}{endpoint}"
-
-        if signed:
-            params = self._sign_params(params)
+        idempotent = method == "GET"
 
         last_error: Optional[NetworkError] = None
+        resynced = False
+        attempt = 0
 
-        for attempt in range(1, self._max_retries + 1):
+        while attempt < self._max_retries:
+            attempt += 1
+            # Re-sign on every attempt so the timestamp is always fresh.
+            request_params = (
+                self._sign_params(dict(base_params)) if signed else dict(base_params)
+            )
             try:
                 logger.debug(
                     "API request [%d/%d]: %s %s params=%s",
                     attempt,
                     self._max_retries,
-                    method.upper(),
+                    method,
                     endpoint,
-                    {k: v for k, v in params.items() if k != "signature"},
+                    {k: v for k, v in request_params.items() if k != "signature"},
                 )
 
-                response = self._send(method, url, params)
-                data = response.json()
+                response = self._send(method, url, request_params)
+                data = self._parse_json(response)
 
-                # ── Check for API errors ─────────────────────────────
+                # Transient server-side failure: only safe to retry for GETs.
+                if response.status_code >= 500 and idempotent:
+                    raise _RetryableServerError(response.status_code)
+
                 if response.status_code >= 400 or (
-                    isinstance(data, dict) and "code" in data and str(data["code"]) != "200"
+                    isinstance(data, dict)
+                    and "code" in data
+                    and str(data["code"]) != "200"
                 ):
                     self._handle_api_error(data, response.status_code, response)
 
                 logger.debug(
-                    "API response [%s]: status=%d",
-                    endpoint,
-                    response.status_code,
+                    "API response [%s]: status=%d", endpoint, response.status_code
                 )
                 return data
 
+            except BinanceAPIError as exc:
+                # Clock drift: re-sync once, then retry (does not use up an attempt).
+                if (
+                    signed
+                    and not resynced
+                    and exc.code == self._TIMESTAMP_ERROR_CODE
+                ):
+                    resynced = True
+                    attempt -= 1
+                    logger.warning("Timestamp rejected (-1021); re-syncing clock")
+                    self.sync_time()
+                    continue
+                raise
+
+            except _RetryableServerError as exc:
+                last_error = NetworkError(
+                    f"Binance returned HTTP {exc.status_code} "
+                    f"(attempt {attempt}/{self._max_retries})"
+                )
+                logger.warning("%s", last_error)
+
             except (
-                httpx.ConnectError,
                 httpx.TimeoutException,
-                httpx.ReadError,
-                httpx.WriteError,
-                httpx.PoolTimeout,
+                httpx.NetworkError,
+                httpx.RemoteProtocolError,
             ) as exc:
+                never_sent = isinstance(exc, self._NEVER_SENT_ERRORS)
                 last_error = NetworkError(
                     f"Network error on attempt {attempt}/{self._max_retries}: {exc}"
                 )
                 logger.warning(
-                    "Network error [%d/%d]: %s",
-                    attempt,
-                    self._max_retries,
-                    str(exc),
+                    "Network error [%d/%d]: %s", attempt, self._max_retries, str(exc)
                 )
-                if attempt < self._max_retries:
-                    delay = self._retry_delay * (2 ** (attempt - 1))
-                    logger.info("Retrying in %.1fs...", delay)
-                    time.sleep(delay)
-                    # Re-sign with fresh timestamp on retry
-                    if signed:
-                        for key in ("timestamp", "signature", "recvWindow"):
-                            params.pop(key, None)
-                        params = self._sign_params(params)
+                if not (idempotent or never_sent):
+                    raise NetworkError(
+                        f"{method} {endpoint} failed after the request may have "
+                        f"been sent ({type(exc).__name__}). The outcome is "
+                        "unknown - check your open orders before retrying so "
+                        "the order is not placed twice."
+                    ) from exc
 
-            except (RateLimitError, BinanceAPIError, InsufficientBalanceError):
-                raise  # Don't retry on API-level errors
+            if attempt < self._max_retries:
+                delay = self._retry_delay * (2 ** (attempt - 1))
+                logger.info("Retrying in %.1fs...", delay)
+                time.sleep(delay)
 
         raise last_error or NetworkError("Request failed after all retries")
+
+    @staticmethod
+    def _parse_json(response: httpx.Response) -> Union[Dict[str, Any], List[Any]]:
+        """Decode a JSON body, turning proxy/HTML error pages into API errors."""
+        try:
+            return response.json()
+        except ValueError:
+            snippet = response.text[:200].strip() or "<empty body>"
+            logger.error(
+                "Non-JSON response: http_status=%d body=%r",
+                response.status_code,
+                snippet,
+            )
+            raise BinanceAPIError(
+                code=response.status_code,
+                message=f"Unexpected non-JSON response from server: {snippet}",
+                status_code=response.status_code,
+            )
 
     def _send(
         self,
@@ -244,12 +323,29 @@ class BinanceClient:
         raise ValueError(f"Unsupported HTTP method: {method}")
 
     @staticmethod
+    def _retry_after_seconds(response: httpx.Response, default: int = 60) -> int:
+        """Parse a ``Retry-After`` header (seconds or HTTP-date) defensively."""
+        raw = response.headers.get("Retry-After")
+        if not raw:
+            return default
+        try:
+            return max(int(raw), 0)
+        except ValueError:
+            try:
+                delta = parsedate_to_datetime(raw).timestamp() - time.time()
+                return max(int(delta), 0)
+            except (TypeError, ValueError):
+                return default
+
+    @staticmethod
     def _handle_api_error(
         data: dict,
         status_code: int,
         response: httpx.Response,
     ) -> None:
         """Classify and raise the appropriate exception for an API error."""
+        if not isinstance(data, dict):
+            data = {}
         error_code = data.get("code", status_code)
         error_msg = data.get("msg", "Unknown API error")
 
@@ -260,9 +356,11 @@ class BinanceClient:
             status_code,
         )
 
-        if error_code in BinanceClient._RATE_LIMIT_CODES:
-            retry_after = int(response.headers.get("Retry-After", 60))
-            raise RateLimitError(retry_after)
+        if (
+            error_code in BinanceClient._RATE_LIMIT_CODES
+            or status_code in BinanceClient._RATE_LIMIT_HTTP_STATUSES
+        ):
+            raise RateLimitError(BinanceClient._retry_after_seconds(response))
 
         if error_code in BinanceClient._INSUFFICIENT_BALANCE_CODES:
             raise InsufficientBalanceError(
@@ -337,11 +435,14 @@ class BinanceClient:
         Args:
             params: Order parameters (symbol, side, type, quantity, etc.).
                     ``newOrderRespType=RESULT`` is added automatically to
-                    get execution details in the response.
+                    get execution details in the response.  The dict passed
+                    in is not modified.
 
         Returns:
             Order response including orderId, status, executedQty, avgPrice.
+            Conditional (algo) responses are normalised to the same shape.
         """
+        params = dict(params)
         params["newOrderRespType"] = "RESULT"
         logger.info(
             "Placing order: symbol=%s side=%s type=%s qty=%s",
@@ -351,26 +452,16 @@ class BinanceClient:
             params.get("quantity"),
         )
         # Binance migrated conditional orders to the algoOrder endpoint
+        is_algo = params.get("type") in self._ALGO_ORDER_TYPES
         endpoint = "/fapi/v1/order"
-        if params.get("type") in ("STOP", "STOP_MARKET", "TAKE_PROFIT", "TAKE_PROFIT_MARKET"):
+        if is_algo:
             endpoint = "/fapi/v1/algoOrder"
             params["algoType"] = "CONDITIONAL"
 
         result = self._make_request("POST", endpoint, params=params)
-        
-        # Normalize Algo API response to match standard order response structure
-        if "algoId" in result and "orderId" not in result:
-            result["orderId"] = result["algoId"]
-        if "clientAlgoId" in result and "clientOrderId" not in result:
-            result["clientOrderId"] = result["clientAlgoId"]
-        if "triggerPrice" in result and "stopPrice" not in result:
-            result["stopPrice"] = result["triggerPrice"]
-        if "executedQty" not in result:
-            result["executedQty"] = "0"
-        if "status" not in result:
-            result["status"] = "NEW" # Algo orders are typically NEW when placed
-        if "type" not in result:
-            result["type"] = params.get("type", "STOP")
+        if is_algo:
+            result = self._normalize_algo_response(result, params)
+
         logger.info(
             "Order response: orderId=%s status=%s executedQty=%s avgPrice=%s",
             result.get("orderId"),
@@ -378,6 +469,39 @@ class BinanceClient:
             result.get("executedQty"),
             result.get("avgPrice"),
         )
+        return result
+
+    @staticmethod
+    def _normalize_algo_response(
+        result: Dict[str, Any], params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Map an Algo Order response onto the standard order response shape.
+
+        The documented Algo API uses ``algoId``, ``clientAlgoId``,
+        ``algoStatus``, ``orderType``, ``quantity`` and ``triggerPrice``,
+        whereas the standard order API uses ``orderId``, ``clientOrderId``,
+        ``status``, ``type``, ``origQty`` and ``stopPrice``.  The testnet has
+        been observed returning a mix of both, so each standard field is only
+        filled in when it is missing - values Binance already sent win.
+        """
+        result = dict(result)
+        aliases = {
+            "orderId": "algoId",
+            "clientOrderId": "clientAlgoId",
+            "stopPrice": "triggerPrice",
+            "origQty": "quantity",
+            "type": "orderType",
+            "status": "algoStatus",
+        }
+        for standard, algo in aliases.items():
+            if standard not in result and algo in result:
+                result[standard] = result[algo]
+
+        result.setdefault("executedQty", "0")
+        result.setdefault("status", "NEW")  # newly accepted algo orders are NEW
+        result.setdefault("type", params.get("type", "STOP"))
+        result.setdefault("origQty", str(params.get("quantity", "0")))
+        result.setdefault("price", str(params.get("price", "0")))
         return result
 
     def cancel_order(self, symbol: str, order_id: int) -> Dict[str, Any]:
