@@ -1,9 +1,11 @@
 from decimal import Decimal
+
 import pytest
 
-from bot.validators import ExchangeValidator
-from bot.models import SymbolInfo, LotSizeFilter, PriceFilter, MinNotionalFilter
 from bot.exceptions import ValidationError
+from bot.models import LotSizeFilter, MinNotionalFilter, PriceFilter, SymbolInfo
+from bot.validators import ExchangeValidator
+
 
 @pytest.fixture
 def dummy_symbol_info():

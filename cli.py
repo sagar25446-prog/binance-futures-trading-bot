@@ -57,7 +57,7 @@ from bot.exceptions import (
     ValidationError,
 )
 from bot.logging_config import setup_logging
-from bot.models import OrderRequest, OrderResponse, OrderSide, OrderType
+from bot.models import OrderRequest, OrderResponse, OrderSide
 from bot.orders import OrderManager
 from bot.validators import validate_cli_inputs
 

@@ -1,9 +1,11 @@
 from decimal import Decimal
+
 import pytest
 
-from bot.validators import validate_cli_inputs
-from bot.models import OrderType, OrderSide
 from bot.exceptions import ValidationError
+from bot.models import OrderSide, OrderType
+from bot.validators import validate_cli_inputs
+
 
 def test_validate_cli_inputs_market():
     """Test valid market order parsing."""
@@ -78,7 +80,9 @@ def test_infinite_price_rejected():
 
 def test_model_rejects_infinite_quantity():
     from decimal import Decimal
+
     from pydantic import ValidationError as PydanticError
+
     from bot.models import OrderRequest
 
     with pytest.raises(PydanticError):

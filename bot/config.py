@@ -29,7 +29,6 @@ from dotenv import load_dotenv
 
 from bot.exceptions import ConfigurationError
 
-
 _T = TypeVar("_T")
 
 _TESTNET_HOSTS = {"testnet.binancefuture.com", "demo-fapi.binance.com"}

@@ -1,9 +1,11 @@
 import logging
+
 from bot.logging_config import SecretSanitizer
+
 
 def test_secret_sanitizer():
     sanitizer = SecretSanitizer()
-    
+
     # Test api_key redaction
     record = logging.LogRecord(
         name="test", level=logging.INFO, pathname="", lineno=0,
@@ -12,7 +14,7 @@ def test_secret_sanitizer():
     sanitizer.filter(record)
     assert "12345678****" in record.msg
     assert "90abcdef" not in record.msg
-    
+
     # Test api_secret redaction
     record = logging.LogRecord(
         name="test", level=logging.INFO, pathname="", lineno=0,
@@ -21,7 +23,7 @@ def test_secret_sanitizer():
     sanitizer.filter(record)
     assert "abcd****" in record.msg
     assert "123456" not in record.msg
-    
+
     # Test signature redaction
     record = logging.LogRecord(
         name="test", level=logging.INFO, pathname="", lineno=0,
@@ -29,7 +31,7 @@ def test_secret_sanitizer():
     )
     sanitizer.filter(record)
     assert "a1b2c3d4****" in record.msg
-    
+
     # Test header redaction
     record = logging.LogRecord(
         name="test", level=logging.INFO, pathname="", lineno=0,

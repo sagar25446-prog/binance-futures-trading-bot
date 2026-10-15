@@ -10,7 +10,7 @@ import pytest
 
 from bot.client import BinanceClient
 from bot.config import Settings
-from bot.models import OrderRequest, OrderSide, OrderType, OrderResponse
+from bot.models import OrderRequest, OrderResponse, OrderSide, OrderType
 from bot.orders import OrderManager
 
 
@@ -45,7 +45,7 @@ def test_order_manager_place_market_order_e2e(order_manager, client):
         order_type=OrderType.MARKET,
         quantity=Decimal("0.1")
     )
-    
+
     mock_response = {
         "orderId": 12345,
         "symbol": "BTCUSDT",
@@ -60,9 +60,9 @@ def test_order_manager_place_market_order_e2e(order_manager, client):
 
     with patch.object(order_manager._validator, 'validate_order') as mock_validate, \
          patch.object(client, 'place_order', return_value=mock_response) as mock_place_order:
-        
+
         response = order_manager.place_order(request)
-        
+
         mock_validate.assert_called_once_with(request)
         mock_place_order.assert_called_once_with({
             "symbol": "BTCUSDT",
@@ -70,7 +70,7 @@ def test_order_manager_place_market_order_e2e(order_manager, client):
             "type": "MARKET",
             "quantity": "0.1"
         })
-        
+
         assert isinstance(response, OrderResponse)
         assert response.order_id == 12345
         assert response.status == "NEW"
@@ -100,12 +100,12 @@ def test_order_manager_place_stop_order_e2e(order_manager, client):
         "price": "2000",
         "stopPrice": "1900"
     }
-    
+
     with patch.object(order_manager._validator, 'validate_order') as mock_validate, \
          patch.object(client, '_make_request', return_value=mock_raw_response) as mock_make_request:
-        
+
         response = order_manager.place_order(request)
-        
+
         mock_validate.assert_called_once_with(request)
         mock_make_request.assert_called_once_with(
             "POST",
@@ -122,7 +122,7 @@ def test_order_manager_place_stop_order_e2e(order_manager, client):
                 "algoType": "CONDITIONAL"
             }
         )
-        
+
         assert isinstance(response, OrderResponse)
         assert response.order_id == 98765
         assert response.status == "NEW"
@@ -142,21 +142,21 @@ def test_binance_client_place_order_routing(client):
         mock_make_request.assert_called_with(
             "POST", "/fapi/v1/order", params={"symbol": "BTCUSDT", "side": "BUY", "type": "MARKET", "quantity": "1", "newOrderRespType": "RESULT"}
         )
-        
+
         # LIMIT
         mock_make_request.return_value = {"orderId": 2}
         client.place_order({"symbol": "BTCUSDT", "side": "BUY", "type": "LIMIT", "quantity": "1", "price": "100"})
         mock_make_request.assert_called_with(
             "POST", "/fapi/v1/order", params={"symbol": "BTCUSDT", "side": "BUY", "type": "LIMIT", "quantity": "1", "price": "100", "newOrderRespType": "RESULT"}
         )
-        
+
         # STOP
         mock_make_request.return_value = {"algoId": 3}
         client.place_order({"symbol": "BTCUSDT", "side": "BUY", "type": "STOP", "quantity": "1", "price": "100", "stopPrice": "90"})
         mock_make_request.assert_called_with(
             "POST", "/fapi/v1/algoOrder", params={"symbol": "BTCUSDT", "side": "BUY", "type": "STOP", "quantity": "1", "price": "100", "stopPrice": "90", "newOrderRespType": "RESULT", "algoType": "CONDITIONAL"}
         )
-        
+
         # TAKE_PROFIT
         mock_make_request.return_value = {"algoId": 4}
         client.place_order({"symbol": "BTCUSDT", "side": "SELL", "type": "TAKE_PROFIT", "quantity": "1", "price": "100", "stopPrice": "110"})
@@ -168,14 +168,14 @@ def test_binance_client_place_order_routing(client):
 def test_binance_client_place_algo_order_normalization(mock_settings):
     """Test that BinanceClient normalizes Algo API responses."""
     client = BinanceClient(mock_settings)
-    
+
     mock_algo_response = {
         "algoId": 123456789,
         "clientAlgoId": "test_algo_id",
         "triggerPrice": "50000.0",
         "symbol": "BTCUSDT",
     }
-    
+
     with patch.object(client, "_make_request", return_value=mock_algo_response) as mock_make:
         result = client.place_order({
             "symbol": "BTCUSDT",
@@ -184,10 +184,10 @@ def test_binance_client_place_algo_order_normalization(mock_settings):
             "quantity": 0.01,
             "stopPrice": 50000.0
         })
-        
+
         # Verify the endpoint was called correctly
         mock_make.assert_called_once()
-        
+
         # Verify normalization
         assert result["orderId"] == 123456789
         assert result["clientOrderId"] == "test_algo_id"

@@ -24,7 +24,6 @@ from logging.handlers import RotatingFileHandler
 
 from rich.logging import RichHandler
 
-
 # ── Secret Sanitizer ──────────────────────────────────────────────────
 
 

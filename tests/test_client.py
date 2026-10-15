@@ -1,9 +1,12 @@
-import pytest
-import httpx
 from unittest.mock import patch
+
+import httpx
+import pytest
+
 from bot.client import BinanceClient
 from bot.config import Settings
-from bot.exceptions import BinanceAPIError, RateLimitError, InsufficientBalanceError
+from bot.exceptions import BinanceAPIError, InsufficientBalanceError, RateLimitError
+
 
 def test_handle_api_error_rate_limit():
     data = {"code": -1015, "msg": "Too many requests"}
@@ -37,16 +40,16 @@ def test_network_retry_logic(mock_sleep):
         retry_delay=0.1
     )
     client = BinanceClient(settings)
-    
+
     mock_response = httpx.Response(200, json={"success": True})
-    
+
     with patch.object(client._client, "request", side_effect=[
         httpx.ConnectError("Connection refused"),
         httpx.TimeoutException("Timeout"),
         mock_response
     ]) as mock_request:
         result = client._make_request("GET", "/test")
-        
+
         # It should succeed on the 3rd attempt
         assert result == {"success": True}
         assert mock_request.call_count == 3

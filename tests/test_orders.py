@@ -1,8 +1,10 @@
-import pytest
 from decimal import Decimal
 
+import pytest
+
+from bot.models import OrderRequest, OrderSide, OrderType, TimeInForce
 from bot.orders import OrderManager
-from bot.models import OrderRequest, OrderType, OrderSide, TimeInForce
+
 
 # Dummy client to pass to OrderManager
 class DummyClient:
