@@ -123,6 +123,14 @@ class OrderRequest(BaseModel):
 
     model_config = {"str_strip_whitespace": True}
 
+    @field_validator("quantity", "price", "stop_price")
+    @classmethod
+    def must_be_finite(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        """Reject Infinity/NaN, which ``gt=0`` alone lets through."""
+        if v is not None and not v.is_finite():
+            raise ValueError("value must be a finite number")
+        return v
+
     @field_validator("symbol")
     @classmethod
     def normalize_symbol(cls, v: str) -> str:

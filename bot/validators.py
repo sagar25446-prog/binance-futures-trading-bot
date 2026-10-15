@@ -259,6 +259,28 @@ class ExchangeValidator:
 # ── CLI Input Parser ─────────────────────────────────────────────────
 
 
+def _parse_positive_decimal(
+    raw: str, field: str, label: str, hint: str
+) -> Decimal:
+    """Parse ``raw`` as a finite, strictly positive ``Decimal``.
+
+    ``Decimal`` happily accepts ``"Infinity"`` and ``"NaN"``; ``Infinity``
+    even compares ``> 0``, so it must be rejected explicitly or it would sail
+    through the positivity check and reach the exchange.
+    """
+    try:
+        value = Decimal(raw.strip())
+        if not value.is_finite() or value <= 0:
+            raise ValueError("not a finite positive number")
+    except (InvalidOperation, ValueError):
+        raise ValidationError(
+            field=field,
+            message=f"Invalid {label} '{raw}'.  {hint}",
+            value=raw,
+        )
+    return value
+
+
 def validate_cli_inputs(
     symbol: str,
     side: str,
@@ -315,59 +337,27 @@ def validate_cli_inputs(
         )
     mapped_type = type_map[order_type]
 
-    # ── Quantity ─────────────────────────────────────────────────────
-    try:
-        qty = Decimal(quantity.strip())
-        if qty <= 0:
-            raise ValueError("non-positive")
-    except (InvalidOperation, ValueError):
-        raise ValidationError(
-            field="quantity",
-            message=(
-                f"Invalid quantity '{quantity}'.  "
-                "Must be a positive number (e.g., 0.001)."
-            ),
-            value=quantity,
-        )
+    # ── Quantity / prices ────────────────────────────────────────────
+    qty = _parse_positive_decimal(
+        quantity, "quantity", "quantity", "Must be a positive number (e.g., 0.001)."
+    )
 
-    # ── Limit price ──────────────────────────────────────────────────
     parsed_price: Optional[Decimal] = None
     if price is not None and price.strip():
-        try:
-            parsed_price = Decimal(price.strip())
-            if parsed_price <= 0:
-                raise ValueError("non-positive")
-        except (InvalidOperation, ValueError):
-            raise ValidationError(
-                field="price",
-                message=(
-                    f"Invalid price '{price}'.  "
-                    "Must be a positive number."
-                ),
-                value=price,
-            )
+        parsed_price = _parse_positive_decimal(
+            price, "price", "price", "Must be a positive number."
+        )
     elif mapped_type in ("LIMIT", "STOP"):
         raise ValidationError(
             field="price",
             message=f"Price is required for {mapped_type} orders.",
         )
 
-    # ── Stop price ───────────────────────────────────────────────────
     parsed_stop: Optional[Decimal] = None
     if stop_price is not None and stop_price.strip():
-        try:
-            parsed_stop = Decimal(stop_price.strip())
-            if parsed_stop <= 0:
-                raise ValueError("non-positive")
-        except (InvalidOperation, ValueError):
-            raise ValidationError(
-                field="stop_price",
-                message=(
-                    f"Invalid stop price '{stop_price}'.  "
-                    "Must be a positive number."
-                ),
-                value=stop_price,
-            )
+        parsed_stop = _parse_positive_decimal(
+            stop_price, "stop_price", "stop price", "Must be a positive number."
+        )
     elif mapped_type == "STOP":
         raise ValidationError(
             field="stop_price",

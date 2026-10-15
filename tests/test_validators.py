@@ -63,3 +63,23 @@ def test_validate_cli_inputs_stop_limit():
     assert req.order_type == OrderType.STOP
     assert req.price == Decimal("500")
     assert req.stop_price == Decimal("490")
+
+
+@pytest.mark.parametrize("bad", ["Infinity", "-Infinity", "NaN", "inf", "0", "-1", "abc", ""])
+def test_non_finite_and_non_positive_quantities_rejected(bad):
+    with pytest.raises(ValidationError):
+        validate_cli_inputs("BTCUSDT", "BUY", "MARKET", bad)
+
+
+def test_infinite_price_rejected():
+    with pytest.raises(ValidationError):
+        validate_cli_inputs("BTCUSDT", "BUY", "LIMIT", "1", price="Infinity")
+
+
+def test_model_rejects_infinite_quantity():
+    from decimal import Decimal
+    from pydantic import ValidationError as PydanticError
+    from bot.models import OrderRequest
+
+    with pytest.raises(PydanticError):
+        OrderRequest(symbol="BTCUSDT", side="BUY", order_type="MARKET", quantity=Decimal("Infinity"))
