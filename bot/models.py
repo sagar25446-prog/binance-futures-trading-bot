@@ -286,3 +286,122 @@ class SymbolInfo(BaseModel):
             price_filter=price_filter,
             min_notional=min_notional,
         )
+
+
+# ── Algorithmic Trading & Position Models ────────────────────────────
+
+
+class TradingMode(str, Enum):
+    """Trading execution mode."""
+
+    PAPER = "paper"
+    LIVE = "live"
+
+
+class MarginType(str, Enum):
+    """Futures margin type."""
+
+    ISOLATED = "ISOLATED"
+    CROSSED = "CROSSED"
+
+
+class SignalType(str, Enum):
+    """Strategy trade signal direction."""
+
+    BUY = "BUY"
+    SELL = "SELL"
+    HOLD = "HOLD"
+    CLOSE = "CLOSE"
+
+
+class Kline(BaseModel):
+    """Single OHLCV candlestick representation."""
+
+    open_time: int
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+    close_time: int
+    quote_volume: Decimal = Decimal("0")
+    trades: int = 0
+
+    @classmethod
+    def from_api(cls, raw: list) -> "Kline":
+        """Construct Kline from Binance /fapi/v1/klines raw list array."""
+        return cls(
+            open_time=int(raw[0]),
+            open=Decimal(str(raw[1])),
+            high=Decimal(str(raw[2])),
+            low=Decimal(str(raw[3])),
+            close=Decimal(str(raw[4])),
+            volume=Decimal(str(raw[5])),
+            close_time=int(raw[6]),
+            quote_volume=Decimal(str(raw[7])),
+            trades=int(raw[8]),
+        )
+
+
+class PositionInfo(BaseModel):
+    """Active futures position risk information from /fapi/v2/positionRisk."""
+
+    symbol: str
+    position_amt: Decimal = Field(..., alias="positionAmt")
+    entry_price: Decimal = Field(..., alias="entryPrice")
+    mark_price: Decimal = Field(..., alias="markPrice")
+    unrealized_profit: Decimal = Field(..., alias="unRealizedProfit")
+    liquidation_price: Decimal = Field(..., alias="liquidationPrice")
+    leverage: int = Field(default=1)
+    margin_type: str = Field(default="isolated", alias="marginType")
+    isolated_margin: Decimal = Field(default=Decimal("0"), alias="isolatedMargin")
+
+    model_config = {"populate_by_name": True}
+
+    @property
+    def has_position(self) -> bool:
+        """True if the position has non-zero size."""
+        return abs(self.position_amt) > Decimal("0")
+
+    @property
+    def is_long(self) -> bool:
+        """True if current open position is long."""
+        return self.position_amt > Decimal("0")
+
+    @property
+    def is_short(self) -> bool:
+        """True if current open position is short."""
+        return self.position_amt < Decimal("0")
+
+
+class TradeSignal(BaseModel):
+    """Signal produced by a trading strategy."""
+
+    symbol: str
+    signal_type: SignalType
+    entry_price: Decimal
+    stop_loss: Optional[Decimal] = None
+    take_profit: Optional[Decimal] = None
+    confidence: float = 1.0
+    rationale: str = ""
+    timestamp: int = 0
+
+
+class TradeRecord(BaseModel):
+    """Completed or active trade journal record."""
+
+    trade_id: str
+    symbol: str
+    side: str
+    entry_price: Decimal
+    exit_price: Optional[Decimal] = None
+    quantity: Decimal
+    stop_loss: Optional[Decimal] = None
+    take_profit: Optional[Decimal] = None
+    pnl: Optional[Decimal] = None
+    pnl_pct: Optional[Decimal] = None
+    fee: Decimal = Decimal("0")
+    entry_time: int
+    exit_time: Optional[int] = None
+    status: str = "OPEN"  # OPEN, CLOSED_TP, CLOSED_SL, CLOSED_MANUAL
+    mode: str = "paper"

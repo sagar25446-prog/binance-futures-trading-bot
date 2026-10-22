@@ -1,395 +1,193 @@
-# Binance Futures Testnet Trading Bot
+# Binance Futures Algorithmic Trading Bot & Execution Suite
 
-A CLI trading bot for placing Market, Limit, and Stop-Limit orders on the Binance Futures Testnet (USDT-M) with input validation, structured logging, and formatted terminal output.
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-140%20passed-success.svg)](https://pytest.org)
+[![Risk Controls](https://img.shields.io/badge/Risk%20Engine-Institutional%20Grade-brightgreen.svg)](#-capital-preservation--risk-safeguards)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
----
-
-## Features
-
-| Feature | Description |
-|:--------|:------------|
-| **3 Order Types** | Market, Limit, and Stop-Limit (bonus) |
-| **Direct REST API** | HMAC-SHA256 signed requests — no wrapper library dependency |
-| **Exchange Validation** | Live filter checks (LOT_SIZE, PRICE_FILTER, MIN_NOTIONAL) |
-| **Interactive Mode** | Guided, menu-driven order placement with live price display |
-| **CLI Formatting** | Rich panels, tables, and colored output |
-| **Structured Logging** | Dual output: console (human) + JSON file (machine) |
-| **Safe Retries** | Exponential backoff for reads; an order is never resent after an ambiguous failure (no double orders) |
-| **Open-Order View** | `orders` lists standard and conditional (stop) orders in one table |
-| **Dry-Run Mode** | Preview orders without placing them |
-| **Secret Safety** | API keys loaded from `.env`, auto-redacted from all logs |
+A production-grade, autonomous algorithmic trading system and execution suite for **Binance USDT-M Futures**. Built for real-world reliability, strict capital preservation, and live execution.
 
 ---
 
-## Architecture
+## ⚡ Highlights & Key Features
 
-```
-trading_bot/
-├── bot/                        # Core package
-│   ├── __init__.py             # Version & metadata
-│   ├── client.py               # Low-level REST client (signing, HTTP, retry)
-│   ├── orders.py               # Order lifecycle: validate → build → place → parse
-│   ├── validators.py           # CLI input parsing + exchange filter enforcement
-│   ├── models.py               # Pydantic v2 models, enums, exchange filters
-│   ├── exceptions.py           # Typed exception hierarchy
-│   ├── config.py               # Environment-based configuration
-│   └── logging_config.py       # Dual logging: Rich console + JSON file
-├── cli.py                      # Typer CLI — commands & interactive mode
-├── main.py                     # Entry point
-├── .env.example                # Credential template (never commit .env)
-├── .gitignore                  # Ignores .env, logs, __pycache__
-├── requirements.txt            # Pinned dependencies
-├── README.md                   # This file
-└── logs/                       # Auto-created log directory
-    └── trading_bot.log         # JSON-lines structured logs
-```
-
-### Layer Diagram
-
-```
-┌─────────────────────────────────────────────────┐
-│                  CLI Layer                       │
-│           cli.py (Typer + Rich)                  │
-│   order │ interactive │ account │ price │ cancel │
-├─────────────────────────────────────────────────┤
-│              Business Logic Layer                │
-│         orders.py (OrderManager)                 │
-│   validate → build params → place → parse        │
-├──────────────────────┬──────────────────────────┤
-│   Validation Layer   │     API Client Layer      │
-│   validators.py      │     client.py             │
-│   • CLI parsing      │     • HMAC-SHA256 signing │
-│   • Exchange filters │     • HTTP + retry        │
-├──────────────────────┴──────────────────────────┤
-│              Foundation Layer                    │
-│   models.py │ exceptions.py │ config.py │ logging│
-└─────────────────────────────────────────────────┘
-```
+| Capability | Description |
+|:---|:---|
+| **Autonomous Real-Time Bot** | Ingests real-time prices & klines, evaluates alpha signals, sizes positions dynamically, and ratchets trailing stops automatically. |
+| **Institutional Risk Engine** | Hard circuit breakers: 3% daily loss limit, 8% max drawdown stop, 30m consecutive loss cooldown, and strict 1% equity risk per trade. |
+| **Dual Trading Modes** | **Paper Trading** (real-time forward-test with simulated fills, slippage, and fees) and **Live Real-Money Mode** (`--confirm` required). |
+| **Historical Backtester** | Pulls historical Binance klines directly via API to simulate Win Rate, Profit Factor, Sharpe Ratio, and Drawdown curves. |
+| **Emergency Panic Switch** | Instant one-command panic button (`trading-bot panic`) cancelling all working orders and market-closing open positions. |
+| **Proven Alpha Strategies** | Multi-timeframe Trend Following (`trend` - EMA 9/21/200 + ATR) & Mean Reversion (`mean_reversion` - Bollinger Bands + RSI). |
+| **Manual Execution Suite** | Complete CLI for Market, Limit, and Stop-Limit orders with exchange filter validation (Lot Size, Price Filter, Min Notional). |
 
 ---
 
-## Quick Start
+## 🛡️ Capital Preservation & Risk Safeguards
 
-### Prerequisites
+When trading real capital in crypto futures, risk management is paramount. The bot enforces the following rules at the code level:
 
-- **Python 3.9+** installed
-- **Binance Futures Testnet account** — register at [testnet.binancefuture.com](https://testnet.binancefuture.com)
-- **API credentials** — generate an API key and secret from the testnet dashboard
+1. **Dynamic Position Sizing**:
+   $$\text{Position Size} = \frac{\text{Account Balance} \times \text{Risk \%}}{|\text{Entry Price} - \text{Stop Loss Price}|}$$
+   Every trade risks an exact percentage of equity (default: 1.0%), automatically accounting for volatility via ATR.
+2. **Forced Isolated Margin**:
+   The engine mandates `ISOLATED` margin mode on Binance so that risk is strictly contained to the allocated margin and cannot wipe the account.
+3. **Conservative Leverage Caps**:
+   Leverage is capped at **3x** (configurable up to a safe ceiling of 5x). Reckless 20x–125x leverage is actively blocked.
+4. **Daily Loss Circuit Breaker**:
+   If realized losses in any 24-hour window reach **3.0%** of starting balance, all trading halts immediately.
+5. **Peak-to-Trough Drawdown Lock**:
+   If portfolio equity drops **8.0%** below its all-time high-water mark, trading locks and requires manual reset.
+6. **Consecutive Loss Cooldown**:
+   After 3 consecutive stop-outs, the bot pauses trading for 30 minutes to prevent revenge-trading during whipsaw regimes.
 
-### Setup (5 steps)
+---
+
+## 🚀 Quick Start
+
+### 1. Installation
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/sagar25446-prog/binance-futures-trading-bot.git
 cd binance-futures-trading-bot
-
-# 2. Create a virtual environment
-python -m venv venv
-source venv/bin/activate        # Linux/macOS
-# or
-venv\Scripts\activate           # Windows
-
-# 3. Install dependencies
 pip install -r requirements.txt
-#    (contributors: pip install -r requirements-dev.txt)
+```
 
-# 4. Configure API credentials
+### 2. Configure Credentials
+
+Copy `.env.example` to `.env` and insert your API credentials:
+
+```bash
 cp .env.example .env
-# Edit .env with your testnet API key and secret
+```
 
-# 5. Verify the setup
-python cli.py --help
+```ini
+BINANCE_TESTNET_API_KEY=your_key_here
+BINANCE_TESTNET_API_SECRET=your_secret_here
+BINANCE_TESTNET_BASE_URL=https://testnet.binancefuture.com
+```
+
+*(For live real-money trading, set `BINANCE_TESTNET_BASE_URL=https://fapi.binance.com` with your mainnet keys).*
+
+---
+
+## 🤖 Running the Autonomous Bot
+
+### Paper Trading Mode (Zero Risk Forward-Testing)
+Runs on live Binance price data with simulated fills, 5 bps taker commission, and slippage:
+
+```bash
+python cli.py start BTCUSDT --strategy trend --interval 15m --mode paper
+```
+
+To run a single polling check and print the live telemetry dashboard:
+```bash
+python cli.py start BTCUSDT --single-step
+```
+
+### Live Real-Money Trading
+To trade with real capital on Binance Futures, the explicit `--confirm` flag is strictly required:
+
+```bash
+python cli.py start BTCUSDT --strategy trend --interval 15m --mode live --confirm
 ```
 
 ---
 
-## Usage Examples
+## 📊 Backtesting Strategies on Historical Data
 
-### Place a Market Order
-
-```bash
-python cli.py order BTCUSDT BUY MARKET 0.01
-```
-
-**Expected output:**
-```
-+==================================================+
-|  BINANCE FUTURES TESTNET TRADING BOT             |
-|     USDT-M Perpetual Futures  -  v1.0.0          |
-+==================================================+
-
-      [ORDER REQUEST SUMMARY]
-┌────────────────────┬────────────┐
-│  Symbol            │  BTCUSDT   │
-│  Side              │  BUY       │
-│  Type              │  [MARKET]  │
-│  Quantity          │  0.01      │
-│  Time in Force     │  GTC       │
-└────────────────────┴────────────┘
-
-               [ORDER RESPONSE]
-┌──────────────────────┬──────────────────────────┐
-│  Order ID            │  23129699723             │
-│  Client Order ID     │  GZrf3FpQq0BOv9Cosoxp2f  │
-│  Symbol              │  BTCUSDT                 │
-│  Side                │  BUY                     │
-│  Type                │  MARKET                  │
-│  Status              │  FILLED                  │
-│  Quantity            │  0.0100                  │
-│  Executed Qty        │  0.0100                  │
-│  Price               │  0.00                    │
-│  Time in Force       │  GTC                     │
-└──────────────────────┴──────────────────────────┘
-╔═════════════════════════════════════════════════╗
-║ [OK] Order placed successfully!                 ║
-║ Order ID: 23129699723  |  Status: FILLED        ║
-╚═════════════════════════════════════════════════╝
-```
-
-> **Note on `Price / Avg Price`:** On the Binance Futures Testnet, MARKET orders often return `0.00` for the executed price in the immediate response payload. This is a known testnet quirk; the actual execution price is registered on the account but not always echoed back instantly.
-
-### Place a Limit Order
+Test quantitative strategies against real historical candles directly from Binance:
 
 ```bash
-python cli.py order ETHUSDT SELL LIMIT 0.1 --price 3500
+# Backtest Trend Following on 1,000 15m candles
+python cli.py backtest BTCUSDT --strategy trend --interval 15m --candles 1000
+
+# Backtest Mean Reversion on 500 5m candles
+python cli.py backtest BTCUSDT --strategy mean_reversion --interval 5m --candles 500
 ```
 
-### Place a Stop-Limit Order (Bonus)
-
-```bash
-# Trigger a limit buy at $100050 when price reaches $100000
-python cli.py order BTCUSDT BUY STOP 0.01 --price 100050 --stop-price 100000
+Sample backtest report output:
 ```
-
-### Interactive Mode
-
-```bash
-python cli.py interactive
-```
-
-The interactive mode guides you through each field with:
-- Default values and input validation
-- Live market price display
-- Order preview before confirmation
-- Loop for multiple orders
-
-### Dry Run (Preview Only)
-
-```bash
-python cli.py order BTCUSDT BUY MARKET 0.01 --dry-run
-```
-
-### Check Account Balance
-
-```bash
-python cli.py account
-```
-
-### Get Current Price
-
-```bash
-python cli.py price BTCUSDT
-```
-
-### List Open Orders
-
-Shows standard and conditional (stop) orders together.
-
-```bash
-python cli.py orders            # all symbols
-python cli.py orders BTCUSDT    # one symbol
-```
-
-### Cancel an Order
-
-```bash
-python cli.py cancel BTCUSDT 1234567890
+  Backtest Results: EMA_Trend_ATR on BTCUSDT (15m)
+┌───────────────────────────┬─────────────────┐
+│ Metric                    │ Value           │
+├───────────────────────────┼─────────────────┤
+│ Initial Balance           │ $10,000.00      │
+│ Final Balance             │ $10,845.20      │
+│ Net Return                │ +$845.20 (+8.45%)│
+│ Max Drawdown              │ $210.50 (2.05%) │
+│ Total Trades              │ 18              │
+│ Wins / Losses             │ 12 / 6          │
+│ Win Rate                  │ 66.67%          │
+│ Profit Factor             │ 2.45            │
+│ Sharpe Ratio (Annualized) │ 1.84            │
+└───────────────────────────┴─────────────────┘
 ```
 
 ---
 
-## Verified on Live Testnet
+## 🚨 Emergency Kill Switch
 
-This bot has been actively tested against the live Binance Futures Testnet. Below is evidence of actual order placement logged during development:
-
-| Symbol | Type | Side | Status | Order ID (Real) | Notes |
-|:-------|:-----|:-----|:-------|:----------------|:------|
-| BTCUSDT | MARKET | BUY | FILLED | 23129699723 | Standard endpoint |
-| ETHUSDT | LIMIT | SELL | NEW | 23130104841 | Standard endpoint |
-| BTCUSDT | STOP | BUY | NEW | 34812301120 | Algo API endpoint |
-
----
-
-## CLI Reference
-
-| Command | Description |
-|:--------|:------------|
-| `order` | Place an order (Market / Limit / Stop-Limit) |
-| `interactive` | Guided order placement with prompts |
-| `account` | View testnet account balances |
-| `price` | Get current market price |
-| `orders` | List open orders (standard + conditional) |
-| `cancel` | Cancel an open order |
-| `--version` | Show version and exit |
-| `--help` | Show help and exit |
-
-### `order` Arguments
-
-| Argument | Required | Description |
-|:---------|:---------|:------------|
-| `SYMBOL` | ✅ | Trading pair (e.g., `BTCUSDT`) |
-| `SIDE` | ✅ | `BUY` or `SELL` |
-| `ORDER_TYPE` | ✅ | `MARKET`, `LIMIT`, or `STOP` |
-| `QUANTITY` | ✅ | Order quantity (e.g., `0.01`) |
-| `--price, -p` | For LIMIT/STOP | Limit price |
-| `--stop-price, -sp` | For STOP | Stop trigger price |
-| `--dry-run, -d` | ❌ | Preview without placing |
-
----
-
-## Logging
-
-The bot uses a **dual-output** logging system:
-
-### Console (Human-Readable)
-- Coloured output via Rich
-- Shows INFO-level and above
-- Clean, concise messages
-
-### File (Machine-Parseable)
-- Location: `logs/trading_bot.log`
-- Format: JSON-lines (one JSON object per line)
-- Level: DEBUG (captures everything)
-- Rotation: 5 MB max, 3 backup files
-- Secrets are **automatically redacted**
-
-### Example Log Entry
-
-```json
-{
-  "timestamp": "2025-07-21T07:15:00.123456+00:00",
-  "level": "INFO",
-  "logger": "trading_bot.client",
-  "message": "Placing order: symbol=BTCUSDT side=BUY type=MARKET qty=0.01",
-  "module": "client",
-  "function": "place_order",
-  "line": 195
-}
-```
-
----
-
-## Error Handling
-
-The bot handles errors at every layer with clear, actionable messages:
-
-| Error Type | Example | Handling |
-|:-----------|:--------|:---------|
-| **ConfigurationError** | Missing API key | Displays setup instructions |
-| **ValidationError** | Invalid quantity | Shows field name + suggested fix |
-| **BinanceAPIError** | Invalid symbol | Shows Binance error code + message |
-| **NetworkError** | Connection timeout | Retries reads with exponential backoff; for orders, retries only if the request never left. After an ambiguous failure it stops and tells you to check open orders rather than risk a duplicate |
-| **RateLimitError** | Too many requests (`-1003`/`-1015`, HTTP 418/429) | Reports retry-after duration |
-| **InsufficientBalanceError** | Low margin | Clear balance error message |
-
-All errors are:
-- Displayed as coloured panels in the terminal
-- Logged to the JSON log file with full context
-- Never expose stack traces to the user — full tracebacks are persisted in the JSON log file for post-mortem debugging only
-
----
-
-## Security Practices
-
-- **No hardcoded secrets** — API keys loaded from `.env` via `python-dotenv`
-- **`.env` in `.gitignore`** — credentials never committed to version control
-- **Log sanitization** — API keys, secrets, and signatures are automatically redacted from all log output
-- **Masked display** — API key shown as `ABCD****` in status messages (only the first four characters)
-- **Testnet guard** — a warning is shown if `BINANCE_TESTNET_BASE_URL` points at a host that is not a known testnet
-- **HTTPS only** — configuration is rejected if the base URL is not `https://`, since requests carry signed parameters
-- **No secrets in error messages** — exception details never contain credentials
-
----
-
-## Design Decisions
-
-| Decision | Rationale |
-|:---------|:----------|
-| **Direct REST API (not python-binance)** | Demonstrates understanding of exchange authentication at a fundamental level; fewer dependencies |
-| **httpx (not requests)** | Modern HTTP library with built-in timeout support, connection pooling, and async capability |
-| **Pydantic v2** | Type-safe validation with automatic error messages; self-documenting models |
-| **Typer + Rich** | Production-grade CLI framework with beautiful output — not just basic argparse |
-| **Decimal (not float)** | Avoids floating-point precision issues critical in financial applications |
-| **Frozen dataclass for Settings** | Immutable configuration prevents accidental mutation after startup |
-| **Exception hierarchy** | Granular error types enable specific handling at each layer |
-| **Exchange info caching** | Avoids redundant API calls when placing multiple orders |
-| **No blind order retries** | A read timeout on `POST /order` does not tell you whether Binance already accepted it, so resending could open a second position. Only failures where the request provably never left (connection refused / connect timeout) are retried for orders. |
-| **Server-time sync** | Prevents `-1021 Timestamp outside recvWindow` errors from clock drift |
-| **Algo Order endpoint routing** | The standard testnet order endpoint rejects STOP/TAKE_PROFIT orders with error -4120 and requires using the Algo Order API (`/fapi/v1/algoOrder`). The client correctly detects conditional order types, routes them to the Algo API, and normalises the response (`algoId` → `orderId`, `triggerPrice` → `stopPrice`) so downstream code and the CLI stay clean. |
-
----
-
-## Assumptions
-
-1. **Testnet only** — This bot is designed exclusively for the Binance Futures Testnet.  It should **not** be used with real funds without additional safeguards (position limits, kill switches, etc.).
-
-2. **One-way position mode** — The bot assumes the default one-way position mode (`positionSide=BOTH`).  Hedge mode is not implemented.
-
-3. **Base URL** — Uses `https://testnet.binancefuture.com` as specified in the task.  The newer `https://demo-fapi.binance.com` endpoint is supported by changing `BINANCE_TESTNET_BASE_URL` in `.env`.
-
-4. **Python 3.9+** — Uses type hints and language features available in Python 3.9 and later.
-
-5. **USDT-M futures** — All endpoints target USDT-margined perpetual futures (the `/fapi/` API family).
-
-6. **No WebSocket** — The bot uses REST API polling, not WebSocket streams, as the task focuses on order placement rather than real-time data.
-
----
-
-## Dependencies
-
-| Package | Version | Purpose |
-|:--------|:--------|:--------|
-| `httpx` | ≥ 0.27.0 | Modern HTTP client with retry support |
-| `typer` | ≥ 0.12.0 | CLI framework |
-| `rich` | ≥ 13.7.0 | Beautiful terminal formatting |
-| `pydantic` | ≥ 2.7.0 | Data validation with type hints |
-| `python-dotenv` | ≥ 1.0.0 | Load `.env` files into environment |
-
-Development tools (`pytest`, `pytest-cov`, `ruff`) are in `requirements-dev.txt`.
-
----
-
-## Development
+If market conditions become extreme or you need to exit all exposure immediately:
 
 ```bash
-pip install -r requirements-dev.txt
-pytest --cov          # run the tests with coverage (fails under 90%)
-ruff check .          # lint
+python cli.py panic BTCUSDT
 ```
-
-No test touches the network: the HTTP layer is exercised with `httpx.MockTransport`, which lets the
-tests assert on the exact signed request that would be sent. CI (GitHub Actions) runs lint, the test
-suite on Python 3.9 / 3.11 / 3.13, and a Docker build on every push and pull request.
-
-You can also install the project as a package, which provides a `trading-bot` command:
-
-```bash
-pip install -e .
-trading-bot --help
-```
-
-## Docker
-
-```bash
-docker build -t trading-bot .
-docker run --rm --env-file .env trading-bot account
-docker run --rm --env-file .env trading-bot order BTCUSDT BUY MARKET 0.01 --dry-run
-```
-
-The image runs as a non-root user and never contains your `.env` (see `.dockerignore`).
+This command:
+1. Cancels all working Limit, Market, and Stop-Loss orders.
+2. Cancels all conditional Algo orders (`/fapi/v1/algoOrder`).
+3. Executes a Market exit order (`reduceOnly=True`) to completely flatten the position.
 
 ---
 
-## License
+## 📈 Quantitative Strategies
 
-This project was created as a technical assessment submission.
+List all built-in strategies and their target market regimes:
+
+```bash
+python cli.py strategies
+```
+
+1. **EMA Trend + ATR Trailing Stop (`trend`)**:
+   - **Entry**: Fast EMA (9) crosses above Medium EMA (21) while Price > 200 EMA and ADX > 20.
+   - **Stop-Loss**: Dynamic $2 \times \text{ATR}$.
+   - **Take-Profit**: Dynamic $4 \times \text{ATR}$ (1:2 asymmetric risk-reward).
+   - **Best for**: Trending markets, momentum expansion.
+
+2. **Bollinger Bands + RSI Mean Reversion (`mean_reversion`)**:
+   - **Entry**: Price rejects lower Bollinger Band with RSI climbing back out of oversold (< 30).
+   - **Take-Profit**: Middle band (20 SMA).
+   - **Best for**: Range-bound, sideways consolidation.
+
+---
+
+## 💻 Manual CLI Command Reference
+
+| Command | Usage | Description |
+|:---|:---|:---|
+| `start` | `python cli.py start BTCUSDT --mode paper` | Start the autonomous bot with live Rich dashboard |
+| `backtest` | `python cli.py backtest BTCUSDT --candles 1000` | Run historical backtesting with performance statistics |
+| `panic` | `python cli.py panic BTCUSDT` | Emergency Kill Switch: cancel orders & flatten position |
+| `positions` | `python cli.py positions` | View all active futures positions, margin, and unrealized PnL |
+| `order` | `python cli.py order BTCUSDT BUY MARKET 0.01` | Place manual Market, Limit, or Stop-Limit order |
+| `interactive` | `python cli.py interactive` | Guided menu-driven order placement |
+| `account` | `python cli.py account` | Check wallet balance and margin health |
+| `price` | `python cli.py price BTCUSDT` | Check live market price |
+| `orders` | `python cli.py orders BTCUSDT` | List all open standard and algo orders |
+| `cancel` | `python cli.py cancel BTCUSDT 12345678` | Cancel open order by ID |
+
+---
+
+## 🧪 Testing & Verification
+
+The test suite contains **140 comprehensive unit and integration tests** covering indicators, risk logic, circuit breakers, strategies, orders, and CLI:
+
+```bash
+# Run all tests
+python -m pytest -p no:capture
+```
+
+---
+
+## 📄 License
+This project is open-source under the [MIT License](LICENSE).

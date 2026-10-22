@@ -44,7 +44,16 @@ from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
+from rich.live import Live
 from rich.table import Table
+
+from bot.backtester import BacktestEngine
+from bot.engine import TradingEngine
+from bot.models import TradingMode
+from bot.risk import RiskManager
+from bot.storage import Storage
+from bot.strategies import get_strategy, list_strategies
+from bot.validators import ExchangeValidator
 
 from bot import __version__
 from bot.client import BinanceClient
@@ -685,6 +694,400 @@ def cancel(
 
 
 # ── Version Callback ─────────────────────────────────────────────────
+
+
+
+
+# ── Live Telemetry Renderer ──────────────────────────────────────────
+
+
+def _render_dashboard(telemetry: dict) -> Panel:
+    mode_color = "yellow" if telemetry["mode"] == "PAPER" else "bold red"
+    status_color = (
+        "green"
+        if "Managing" in telemetry["status"] or "Scanning" in telemetry["status"]
+        else "yellow"
+    )
+
+    table = Table(box=box.SIMPLE_HEAD, expand=True)
+    table.add_column("Metric", style="bold cyan")
+    table.add_column("Value", style="bold white")
+
+    table.add_row("Mode", f"[{mode_color}]{telemetry['mode']}[/{mode_color}]")
+    table.add_row(
+        "Symbol & Interval",
+        f"{telemetry['symbol']} ({telemetry['interval']})",
+    )
+    table.add_row("Active Strategy", telemetry["strategy"])
+    table.add_row("Latest Price", f"${telemetry['last_price']:,.2f}")
+    table.add_row("Account Equity", f"${telemetry['equity']:,.2f}")
+    table.add_row(
+        "Status", f"[{status_color}]{telemetry['status']}[/{status_color}]"
+    )
+
+    pos = telemetry.get("open_position")
+    if pos:
+        side_color = "bold green" if pos["side"] == "BUY" else "bold red"
+        pnl_color = "green" if pos["unrealized_pnl"] >= 0 else "red"
+        pos_str = (
+            f"[{side_color}]{pos['side']}[/{side_color}] {pos['quantity']} @ "
+            f"${pos['entry_price']:,.2f} | PnL: "
+            f"[{pnl_color}]${pos['unrealized_pnl']:+,.2f} ({pos['unrealized_pnl_pct']:+,.2f}%)[/{pnl_color}]"
+        )
+        if pos.get("stop_loss"):
+            pos_str += f" | SL: ${pos['stop_loss']:,.2f}"
+        if pos.get("take_profit"):
+            pos_str += f" | TP: ${pos['take_profit']:,.2f}"
+        table.add_row("Open Position", pos_str)
+    else:
+        table.add_row("Open Position", "[dim]None (Flat)[/dim]")
+
+    stats = telemetry.get("stats", {})
+    stats_str = (
+        f"Total: {stats.get('total_trades', 0)} | "
+        f"Win Rate: {stats.get('win_rate', 0)}% | "
+        f"Profit Factor: {stats.get('profit_factor', 0)} | "
+        f"Realized PnL: ${stats.get('total_pnl', 0):+,.2f}"
+    )
+    table.add_row("Performance Stats", stats_str)
+
+    return Panel(
+        table,
+        title=(
+            f"[bold]Binance Autonomous Algorithmic Bot -- "
+            f"[{mode_color}]{telemetry['mode']}[/{mode_color}][/bold]"
+        ),
+        border_style="cyan" if telemetry["mode"] == "PAPER" else "red",
+    )
+
+
+@app.command()
+def start(
+    symbol: str = typer.Argument("BTCUSDT", help="Trading pair (e.g. BTCUSDT)"),
+    strategy: str = typer.Option(
+        "trend", "--strategy", "-s", help="Strategy: trend, mean_reversion"
+    ),
+    interval: str = typer.Option(
+        "15m", "--interval", "-i", help="Candle interval (1m, 5m, 15m, 1h)"
+    ),
+    mode: str = typer.Option(
+        "paper", "--mode", "-m", help="Execution mode: 'paper' or 'live'"
+    ),
+    risk: float = typer.Option(
+        0.01, "--risk", "-r", help="Max risk percentage per trade (0.01 = 1%)"
+    ),
+    leverage: int = typer.Option(
+        3, "--leverage", "-l", help="Leverage multiplier (1 to 5)"
+    ),
+    paper_balance: float = typer.Option(
+        10000.0,
+        "--paper-balance",
+        help="Starting virtual balance for paper trading",
+    ),
+    poll_interval: float = typer.Option(
+        5.0, "--poll-interval", help="Polling interval in seconds"
+    ),
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help="Required confirmation flag for live real-money trading",
+    ),
+    single_step: bool = typer.Option(
+        False,
+        "--single-step",
+        help="Run a single evaluation step and exit (for testing)",
+    ),
+) -> None:
+    """Start the autonomous trading bot in Paper or Live mode."""
+    mode_clean = mode.lower().strip()
+    if mode_clean not in ("paper", "live"):
+        console.print("[bold red]Invalid mode. Choose 'paper' or 'live'.[/bold red]")
+        raise typer.Exit(code=1)
+
+    if mode_clean == "live" and not confirm:
+        console.print(
+            Panel(
+                "[bold red]WARNING: LIVE REAL-MONEY TRADING REQUESTED[/bold red]\n\n"
+                "To trade with real capital on Binance Futures, you must provide the\n"
+                "[bold white]--confirm[/bold white] flag.\n\n"
+                "Example: [green]python cli.py start BTCUSDT --mode live --confirm[/green]",
+                border_style="red",
+            )
+        )
+        raise typer.Exit(code=1)
+
+    trading_mode = (
+        TradingMode.LIVE if mode_clean == "live" else TradingMode.PAPER
+    )
+
+    try:
+        strat = get_strategy(strategy, symbol)
+        storage = Storage()
+
+        with _session() as (settings, _manager):
+            client = BinanceClient(settings)
+            client.sync_time()
+            validator = ExchangeValidator(client)
+            risk_mgr = RiskManager(
+                validator=validator,
+                max_risk_per_trade_pct=risk,
+                max_leverage=leverage,
+            )
+
+            engine = TradingEngine(
+                client=client,
+                strategy=strat,
+                risk_manager=risk_mgr,
+                storage=storage,
+                symbol=symbol,
+                interval=interval,
+                mode=trading_mode,
+                paper_initial_balance=paper_balance,
+                leverage=leverage,
+                poll_interval_seconds=poll_interval,
+            )
+            engine.setup_exchange()
+
+            console.print(
+                Panel(
+                    f"[bold green]Starting Autonomous Trading Bot[/bold green]\n"
+                    f"Symbol: [cyan]{symbol}[/cyan] | Strategy: [cyan]{strat.name}[/cyan] | "
+                    f"Interval: [cyan]{interval}[/cyan] | Mode: [bold]{trading_mode.value.upper()}[/bold]\n"
+                    f"Press [bold yellow]Ctrl+C[/bold yellow] at any time to pause or stop.",
+                    border_style="green",
+                )
+            )
+
+            if single_step:
+                telemetry = engine.step()
+                console.print(_render_dashboard(telemetry))
+                return
+
+            with Live(console=console, screen=False, refresh_per_second=2) as live:
+                try:
+                    while True:
+                        telemetry = engine.step()
+                        live.update(_render_dashboard(telemetry))
+                        import time
+                        time.sleep(poll_interval)
+                except KeyboardInterrupt:
+                    console.print("\n[bold yellow]Trading bot paused by user.[/bold yellow]")
+
+    except TradingBotError as exc:
+        _print_error(exc)
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        _print_error(exc)
+        logger.exception("Unexpected error")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def backtest(
+    symbol: str = typer.Argument("BTCUSDT", help="Trading pair (e.g., BTCUSDT)"),
+    strategy: str = typer.Option(
+        "trend", "--strategy", "-s", help="Strategy (trend, mean_reversion)"
+    ),
+    interval: str = typer.Option(
+        "15m", "--interval", "-i", help="Candle interval (1m, 5m, 15m, 1h)"
+    ),
+    candles: int = typer.Option(
+        1000, "--candles", "-c", help="Number of historical candles to backtest"
+    ),
+    balance: float = typer.Option(
+        10000.0, "--balance", "-b", help="Initial backtest capital ($)"
+    ),
+    risk: float = typer.Option(
+        0.01, "--risk", "-r", help="Risk per trade percentage (0.01 = 1%)"
+    ),
+    leverage: int = typer.Option(3, "--leverage", "-l", help="Leverage multiplier"),
+) -> None:
+    """Run historical backtesting on Binance Futures market data."""
+    try:
+        strat = get_strategy(strategy, symbol)
+        with _session() as (settings, _manager):
+            client = BinanceClient(settings)
+            client.sync_time()
+
+            with console.status(
+                f"[bold cyan]Fetching {candles} historical {interval} candles for {symbol}...[/bold cyan]",
+                spinner="dots",
+            ):
+                engine = BacktestEngine(
+                    strategy=strat,
+                    initial_balance=balance,
+                    risk_per_trade_pct=risk,
+                    leverage=leverage,
+                )
+                klines = engine.fetch_klines(
+                    client, symbol, interval, total_candles=candles
+                )
+
+            console.print(
+                f"[bold green]Fetched {len(klines)} historical candles.[/bold green] Running simulation..."
+            )
+            results = engine.run(klines)
+
+            table = Table(
+                title=f"Backtest Results: {strat.name} on {symbol} ({interval})",
+                box=box.ROUNDED,
+            )
+            table.add_column("Metric", style="bold cyan")
+            table.add_column("Value", style="bold white")
+
+            ret_color = "green" if results["total_return_dollar"] >= 0 else "red"
+            table.add_row("Initial Balance", f"${results['initial_balance']:,.2f}")
+            table.add_row("Final Balance", f"${results['final_balance']:,.2f}")
+            table.add_row(
+                "Net Return",
+                f"[{ret_color}]${results['total_return_dollar']:+,.2f} ({results['total_return_pct']:+,.2f}%)[/{ret_color}]",
+            )
+            table.add_row(
+                "Max Drawdown",
+                f"[red]${results['max_drawdown_dollar']:,.2f} ({results['max_drawdown_pct']:.2f}%)[/red]",
+            )
+            table.add_row("Total Trades", str(results["total_trades"]))
+            table.add_row("Wins / Losses", f"{results['wins']} / {results['losses']}")
+            table.add_row("Win Rate", f"{results['win_rate']:.2f}%")
+            table.add_row("Profit Factor", f"{results['profit_factor']:.2f}")
+            table.add_row(
+                "Sharpe Ratio (Annualized)", f"{results['sharpe_ratio']:.2f}"
+            )
+
+            console.print(table)
+
+    except TradingBotError as exc:
+        _print_error(exc)
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        _print_error(exc)
+        logger.exception("Unexpected error")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def panic(
+    symbol: str = typer.Argument("BTCUSDT", help="Trading pair to emergency close"),
+) -> None:
+    """EMERGENCY KILL SWITCH: Cancel all orders and market-close positions."""
+    try:
+        with _session() as (settings, _manager):
+            client = BinanceClient(settings)
+            client.sync_time()
+
+            with console.status(
+                f"[bold red]EMERGENCY: Flattening positions and cancelling orders for {symbol}...[/bold red]",
+                spinner="dots",
+            ):
+                strat = get_strategy("trend", symbol)
+                validator = ExchangeValidator(client)
+                risk_mgr = RiskManager(validator)
+                storage = Storage()
+                engine = TradingEngine(
+                    client, strat, risk_mgr, storage, symbol, mode=TradingMode.LIVE
+                )
+                res = engine.panic_close_all()
+
+            console.print(
+                Panel(
+                    f"[bold red]EMERGENCY KILL SWITCH EXECUTED FOR {symbol}[/bold red]\n"
+                    f"Cancelled Orders: [bold]{res['cancelled_orders']}[/bold]\n"
+                    f"Position Flattened: [bold]{res['positions_closed']}[/bold]",
+                    border_style="red",
+                )
+            )
+
+    except TradingBotError as exc:
+        _print_error(exc)
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        _print_error(exc)
+        logger.exception("Unexpected error")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def positions(
+    symbol: Optional[str] = typer.Option(
+        None, "--symbol", "-s", help="Optional symbol filter"
+    ),
+) -> None:
+    """List active futures positions, mark price, leverage, and unrealized PnL."""
+    try:
+        with _session() as (settings, _manager):
+            client = BinanceClient(settings)
+            client.sync_time()
+
+            raw_positions = client.get_positions(symbol=symbol)
+            active = [
+                p
+                for p in raw_positions
+                if abs(float(p.get("positionAmt", 0))) > 1e-8
+            ]
+
+            if not active:
+                console.print(
+                    Panel(
+                        "[dim]No active futures positions.[/dim]",
+                        title=f"Positions ({symbol or 'ALL'})",
+                        border_style="cyan",
+                    )
+                )
+                return
+
+            table = Table(title="Active Futures Positions", box=box.ROUNDED)
+            table.add_column("Symbol", style="bold cyan")
+            table.add_column("Side", style="bold")
+            table.add_column("Amount", justify="right")
+            table.add_column("Entry Price", justify="right")
+            table.add_column("Mark Price", justify="right")
+            table.add_column("Unrealized PnL", justify="right")
+            table.add_column("Leverage", justify="center")
+            table.add_column("Margin Type", justify="center")
+
+            for p in active:
+                amt = float(p["positionAmt"])
+                side = "LONG" if amt > 0 else "SHORT"
+                side_color = "green" if amt > 0 else "red"
+                pnl = float(p.get("unRealizedProfit", 0))
+                pnl_color = "green" if pnl >= 0 else "red"
+
+                table.add_row(
+                    p["symbol"],
+                    f"[{side_color}]{side}[/{side_color}]",
+                    f"{abs(amt):.4f}",
+                    f"${float(p['entryPrice']):,.2f}",
+                    f"${float(p['markPrice']):,.2f}",
+                    f"[{pnl_color}]${pnl:+,.2f}[/{pnl_color}]",
+                    f"{p.get('leverage', 1)}x",
+                    p.get("marginType", "isolated").upper(),
+                )
+
+            console.print(table)
+
+    except TradingBotError as exc:
+        _print_error(exc)
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        _print_error(exc)
+        logger.exception("Unexpected error")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def strategies() -> None:
+    """List available quantitative strategies and their optimal market conditions."""
+    strats = list_strategies()
+    table = Table(title="Available Quantitative Strategies", box=box.ROUNDED)
+    table.add_column("Strategy ID", style="bold cyan")
+    table.add_column("Name", style="bold white")
+    table.add_column("Description", style="white")
+    table.add_column("Best For", style="green")
+
+    for s in strats:
+        table.add_row(s["id"], s["name"], s["description"], s["best_for"])
+
+    console.print(table)
 
 
 def _version_callback(value: bool) -> None:

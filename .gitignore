@@ -38,3 +38,9 @@ Thumbs.db
 .coverage
 coverage.xml
 htmlcov/
+
+# ── SQLite Database ─────────────────────────────────────────
+data/
+*.db
+*.sqlite
+*.sqlite3

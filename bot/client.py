@@ -589,3 +589,137 @@ class BinanceClient:
         return self._make_request(
             "GET", "/fapi/v1/openAlgoOrders", params=params
         )
+
+
+    def get_klines(
+        self,
+        symbol: str,
+        interval: str = "15m",
+        limit: int = 100,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> List[List[Any]]:
+        """Fetch historical candlestick (kline) data from Binance Futures.
+
+        Args:
+            symbol: Trading pair (e.g. BTCUSDT).
+            interval: Kline interval (e.g. '1m', '5m', '15m', '1h', '4h', '1d').
+            limit: Number of candlesticks to fetch (max 1500).
+            start_time: Optional start timestamp in milliseconds.
+            end_time: Optional end timestamp in milliseconds.
+
+        Returns:
+            List of raw kline arrays.
+        """
+        params: Dict[str, Any] = {
+            "symbol": symbol.upper(),
+            "interval": interval,
+            "limit": min(limit, 1500),
+        }
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+
+        return self._make_request(
+            "GET", "/fapi/v1/klines", params=params, signed=False
+        )
+
+    def get_positions(
+        self, symbol: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Get position information and risk from /fapi/v2/positionRisk.
+
+        Args:
+            symbol: Optional symbol filter.
+
+        Returns:
+            List of position risk dictionaries.
+        """
+        params: Dict[str, Any] = {}
+        if symbol:
+            params["symbol"] = symbol.upper()
+        return self._make_request(
+            "GET", "/fapi/v2/positionRisk", params=params, signed=True
+        )
+
+    def set_leverage(self, symbol: str, leverage: int) -> Dict[str, Any]:
+        """Set position leverage for a symbol.
+
+        Args:
+            symbol: Trading pair.
+            leverage: Leverage multiplier (1 to 125 depending on pair).
+
+        Returns:
+            Response dict with symbol and new leverage.
+        """
+        params = {
+            "symbol": symbol.upper(),
+            "leverage": int(leverage),
+        }
+        return self._make_request(
+            "POST", "/fapi/v1/leverage", params=params, signed=True
+        )
+
+    def set_margin_type(
+        self, symbol: str, margin_type: str = "ISOLATED"
+    ) -> Dict[str, Any]:
+        """Set margin type (ISOLATED or CROSSED).
+
+        If the margin type is already set to the requested value, Binance
+        returns code -4046 ('No need to change margin type.'), which is safely handled.
+
+        Args:
+            symbol: Trading pair.
+            margin_type: 'ISOLATED' or 'CROSSED'.
+
+        Returns:
+            Response dict.
+        """
+        params = {
+            "symbol": symbol.upper(),
+            "marginType": margin_type.upper(),
+        }
+        try:
+            return self._make_request(
+                "POST", "/fapi/v1/marginType", params=params, signed=True
+            )
+        except BinanceAPIError as exc:
+            if exc.code == -4046:
+                return {"code": 200, "msg": "Margin type already configured"}
+            raise
+
+    def close_position(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Close an active position at market price immediately.
+
+        Queries active position, cancels any working conditional orders,
+        and submits a market order in the opposing direction with reduceOnly=True.
+
+        Args:
+            symbol: Trading pair to close.
+
+        Returns:
+            Order execution response if position was open, else None.
+        """
+        positions = self.get_positions(symbol=symbol)
+        pos = next(
+            (p for p in positions if p.get("symbol") == symbol.upper()), None
+        )
+        if not pos:
+            return None
+
+        amt = float(pos.get("positionAmt", 0))
+        if abs(amt) <= 1e-9:
+            return None
+
+        side = "SELL" if amt > 0 else "BUY"
+        qty = abs(amt)
+
+        params = {
+            "symbol": symbol.upper(),
+            "side": side,
+            "type": "MARKET",
+            "quantity": str(qty),
+            "reduceOnly": "true",
+        }
+        return self.place_order(params)
