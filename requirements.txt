@@ -8,3 +8,5 @@ rich>=13.7.0           # Terminal formatting
 pydantic>=2.7.0        # Data validation with type hints
 python-dotenv>=1.0.0   # Load .env files into environment
 numpy>=1.24.0          # Vectorized technical indicator calculations
+pandas>=2.0.0          # Time series data manipulation
+scikit-learn>=1.3.0    # Machine learning classifiers and walk-forward CV

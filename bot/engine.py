@@ -50,6 +50,7 @@ class TradingEngine:
         paper_initial_balance: float = 10000.0,
         leverage: int = 3,
         poll_interval_seconds: float = 5.0,
+        enable_breakeven: bool = True,
     ) -> None:
         self.client = client
         self.strategy = strategy
@@ -60,6 +61,7 @@ class TradingEngine:
         self.mode = mode
         self.poll_interval = poll_interval_seconds
         self.leverage = leverage
+        self.enable_breakeven = enable_breakeven
 
         self.order_manager = OrderManager(client)
         self.running = False
@@ -169,6 +171,22 @@ class TradingEngine:
         sl = pos["stop_loss"]
         tp = pos["take_profit"]
         qty = pos["quantity"]
+
+        # Breakeven Ratchet: if unrealized profit >= 1.5x stop distance, move SL to breakeven + fee buffer
+        if self.enable_breakeven and sl:
+            stop_dist = abs(entry - sl)
+            if side == "BUY" and (self.last_price - entry) >= Decimal("1.5") * stop_dist and sl < entry:
+                new_sl = entry * Decimal("1.0006")
+                if new_sl > sl:
+                    pos["stop_loss"] = new_sl
+                    sl = new_sl
+                    logger.info("Breakeven ratchet activated! Protected Stop-Loss at %s", new_sl)
+            elif side == "SELL" and (entry - self.last_price) >= Decimal("1.5") * stop_dist and sl > entry:
+                new_sl = entry * Decimal("0.9994")
+                if new_sl < sl:
+                    pos["stop_loss"] = new_sl
+                    sl = new_sl
+                    logger.info("Breakeven ratchet activated! Protected Stop-Loss at %s", new_sl)
 
         exit_triggered = False
         exit_reason = ""
